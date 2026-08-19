@@ -1,0 +1,259 @@
+<template id="ink-bloom-template">
+  <div data-hf-id="hf-ink-root" id="ink-bloom-root" data-composition-id="ink-bloom" data-width="3840" data-height="2160">
+    <canvas data-hf-id="hf-ink-canvas" id="ink-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #ink-bloom-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #040812;
+        overflow: hidden;
+      }
+      #ink-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('ink-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+
+      const T = 15;
+      const TAU = Math.PI * 2;
+      const frameMod = 900;
+
+      function mulberry32(a) {
+        return function() {
+          let t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0xA12026);
+      function hash(x, y) {
+        const n = Math.sin(x * 12.9898 + y * 78.233 + 43758.5453) * 43758.5453;
+        return n - Math.floor(n);
+      }
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % frameMod;
+        ctx.save();
+        ctx.globalAlpha = 0.025;
+        for (let i = 0; i < 1200; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.06})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.75)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+      function drawHalation(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 2.1, t);
+        const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 1200);
+        g.addColorStop(0, `rgba(80,120,200,${0.015 + pulse * 0.015})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // ============ INK SIMULATION (deterministic blob + tendrils) ============
+      const inkBlobs = [];
+      const tendrils = [];
+      const MAX_BLOBS = 3;
+      const TENDRIL_PER_BLOB = 18;
+
+      for (let b = 0; b < MAX_BLOBS; b++) {
+        const baseX = W * (0.25 + 0.5 * hash(b, 100));
+        const baseY = H * (0.25 + 0.5 * hash(b, 200));
+        const baseSize = 120 + 180 * hash(b, 300);
+        const hue = 210 + 30 * hash(b, 400);
+        const saturation = 15 + 10 * hash(b, 500);
+        const lightness = 8 + 6 * hash(b, 600);
+
+        inkBlobs.push({
+          cx: baseX,
+          cy: baseY,
+          baseSize,
+          phase: hash(b, 700) * TAU,
+          k: 1 + Math.floor(hash(b, 800) * 2),
+          k2: 1 + Math.floor(hash(b, 900) * 2),
+          driftX: (hash(b, 1000) - 0.5) * 180,
+          driftY: (hash(b, 1100) - 0.5) * 180,
+          hue,
+          saturation,
+          lightness,
+          tendrils: []
+        });
+
+        for (let t = 0; t < TENDRIL_PER_BLOB; t++) {
+          const angle = (t / TENDRIL_PER_BLOB) * TAU + hash(b * 100 + t, 1200) * 0.8;
+          const length = 80 + 300 * hash(b * 100 + t, 1300);
+          const curl = (hash(b * 100 + t, 1400) - 0.5) * 1.5;
+          inkBlobs[b].tendrils.push({
+            baseAngle: angle,
+            length,
+            curl,
+            phase: hash(b * 100 + t, 1500) * TAU,
+            k: 1 + Math.floor(hash(b * 100 + t, 1600) * 2),
+            width: 2 + 6 * hash(b * 100 + t, 1700),
+            opacity: 0.12 + 0.18 * hash(b * 100 + t, 1800)
+          });
+        }
+      }
+
+      function drawInk(t) {
+        const globalPulse = 0.5 + 0.5 * cycle(1, 0.7, t);
+
+        for (let b = 0; b < inkBlobs.length; b++) {
+          const blob = inkBlobs[b];
+
+          const pulse = 0.5 + 0.5 * cycle(blob.k, blob.phase, t);
+          const pulse2 = 0.5 + 0.5 * cycle(blob.k2, blob.phase * 1.7, t);
+          const size = blob.baseSize * (0.65 + pulse * 0.55);
+          const cx = blob.cx + blob.driftX * cycle(2, blob.phase * 0.3, t);
+          const cy = blob.cy + blob.driftY * cycle(2, blob.phase * 1.1, t);
+
+          // Main ink blob
+          const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.3);
+          const l1 = blob.lightness * (0.55 + pulse * 0.35);
+          const l2 = blob.lightness * (0.25 + pulse2 * 0.2);
+          grad.addColorStop(0, `hsla(${blob.hue},${blob.saturation}%,${l1}%,${0.35 + pulse * 0.25})`);
+          grad.addColorStop(0.5, `hsla(${blob.hue},${blob.saturation}%,${l2}%,${0.15 + pulse * 0.1})`);
+          grad.addColorStop(1, 'hsla(0,0%,0%,0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, size * 1.3, 0, TAU);
+          ctx.fill();
+
+          // Tendrils
+          for (let td = 0; td < blob.tendrils.length; td++) {
+            const tr = blob.tendrils[td];
+            const tp = 0.5 + 0.5 * cycle(tr.k, tr.phase, t);
+            const angle = tr.baseAngle + tr.curl * Math.sin(TAU * 2 * t / T + tr.phase);
+            const len = tr.length * (0.4 + tp * 0.8);
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angle);
+
+            // Tendril core
+            const tgrad = ctx.createLinearGradient(0, 0, 0, len);
+            const op = tr.opacity * (0.6 + tp * 0.4);
+            tgrad.addColorStop(0, `hsla(${blob.hue},${blob.saturation}%,${blob.lightness}%,${op * 0.3})`);
+            tgrad.addColorStop(1, `hsla(${blob.hue},${blob.saturation}%,${blob.lightness}%,0)`);
+            ctx.strokeStyle = tgrad;
+            ctx.lineWidth = tr.width * (0.7 + tp * 0.5);
+            ctx.lineCap = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            const cp1 = len * 0.35 * (1 + 0.4 * Math.sin(TAU * t / T + tr.phase));
+            const cp2 = len * 0.7 * (1 + 0.3 * Math.sin(TAU * t / T + tr.phase * 1.3));
+            ctx.bezierCurveTo(cp1, 0, cp2, len * 0.15, 0, len);
+            ctx.stroke();
+
+            // Tendril fringe (fine filaments)
+            ctx.strokeStyle = `hsla(${blob.hue},${blob.saturation}%,${Math.min(95, blob.lightness + 15)}%,${op * 0.15})`;
+            ctx.lineWidth = tr.width * 0.3;
+            for (let f = 0; f < 3; f++) {
+              const fo = (hash(td * 10 + f, 2000) - 0.5) * 8;
+              ctx.beginPath();
+              ctx.moveTo(fo, 0);
+              ctx.bezierCurveTo(cp1 + fo * 0.6, 0, cp2 + fo * 0.4, len * 0.15, fo, len);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+
+          // Micro bubbles on surface
+          ctx.fillStyle = `hsla(${blob.hue},${blob.saturation}%,${Math.min(95, blob.lightness + 25)}%,${0.08 + globalPulse * 0.06})`;
+          for (let mb = 0; mb < 12; mb++) {
+            const mba = mb * TAU / 12 + cycle(3, blob.phase + mb * 0.4, t) * 0.6;
+            const mbr = size * (0.45 + 0.4 * hash(mb, 2500));
+            const mbx = cx + Math.cos(mba) * mbr;
+            const mby = cy + Math.sin(mba) * mbr;
+            const mbs = 2 + 5 * hash(mb, 2600) * (0.5 + 0.5 * cycle(2, blob.phase + mb, t));
+            ctx.beginPath();
+            ctx.arc(mbx, mby, mbs, 0, TAU);
+            ctx.fill();
+          }
+        }
+      }
+
+      // ============ LIGHT SHAFT (studio backlight) ============
+      function drawLightShaft(t) {
+        const shaftPulse = 0.5 + 0.5 * cycle(1, 1.3, t);
+        const g = ctx.createLinearGradient(0, 0, W * 0.85, H * 0.15);
+        g.addColorStop(0, `rgba(40,60,90,${0.01 + shaftPulse * 0.015})`);
+        g.addColorStop(1, 'rgba(40,60,90,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+
+        // Rim highlights on blobs
+        for (let b = 0; b < inkBlobs.length; b++) {
+          const blob = inkBlobs[b];
+          const pulse = 0.5 + 0.5 * cycle(blob.k, blob.phase, t);
+          const size = blob.baseSize * (0.65 + pulse * 0.55);
+          const cx = blob.cx + blob.driftX * cycle(2, blob.phase * 0.3, t);
+          const cy = blob.cy + blob.driftY * cycle(2, blob.phase * 1.1, t);
+
+          const rim = ctx.createRadialGradient(cx, cy, size * 0.8, cx, cy, size * 1.6);
+          rim.addColorStop(0, 'rgba(0,0,0,0)');
+          rim.addColorStop(0.7, `rgba(80,140,200,${0.015 + pulse * 0.025})`);
+          rim.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = rim;
+          ctx.beginPath();
+          ctx.arc(cx, cy, size * 1.6, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      // ============ FRAME ============
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        // Deep background
+        ctx.fillStyle = '#040812';
+        ctx.fillRect(0, 0, W, H);
+
+        drawInk(t);
+        drawLightShaft(t);
+
+        drawHalation(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['ink-bloom'] = tl;
+    </script>
+  </div>
+</template>
