@@ -1,0 +1,53 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Render run ID to collect MP4s from (default: latest)"
+        required: false
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve run ID
+        id: run
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.run_id }}" ]; then
+            echo "run_id=${{ github.event.inputs.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            id=$(gh run list --workflow=render.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+            echo "run_id=$id" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: renders
+          merge-multiple: true
+          run-id: ${{ steps.run.outputs.run_id }}
+
+      - name: Create GitHub Release with MP4s
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          count=$(ls renders/*.mp4 | wc -l)
+          echo "Collected $count MP4 files"
+          if [ "$count" -eq 0 ]; then
+            echo "No MP4 files found — aborting."
+            exit 1
+          fi
+          gh release create "render-$(date +%Y%m%d-%H%M)" renders/*.mp4 \
+            --title "Rendered backgrounds $(date +%Y-%m-%d)" \
+            --notes "10 seamless-loop 4K 60fps backgrounds rendered via HyperFrames"
