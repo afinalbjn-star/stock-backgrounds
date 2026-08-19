@@ -32,6 +32,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+
       - name: Render 4K60 MP4
         run: npx --yes hyperframes@0.8.3 render -c compositions/${{ matrix.comp }}.html -f 60 -q high -o renders/${{ matrix.comp }}.mp4
 
