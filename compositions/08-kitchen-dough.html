@@ -1,0 +1,524 @@
+<template id="kitchen-dough-template">
+  <div id="kitchen-dough-root" data-composition-id="kitchen-dough" data-width="3840" data-height="2160">
+    <canvas id="kd-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #kitchen-dough-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #170e08;
+        overflow: hidden;
+      }
+      #kd-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('kd-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0x3B57D21);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 2.5, t) * 44,
+          y: H / 2 + cycle(2, 1.3, t) * 20,
+          s: 1 + cycle(1, 0.2, t) * 0.025,
+          r: cycle(1, 3.3, t) * 0.0026
+        };
+      }
+
+      const GOLD = '255,196,110';
+      const CREAM = '255,232,190';
+      const WHEAT = '216,164,96';
+      const DOUGH = '206,158,104';
+
+      const flourMotes = [];
+      for (let i = 0; i < 170; i++) {
+        flourMotes.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 1.5 + rand() * 4.5,
+          alpha: 0.06 + rand() * 0.16
+        });
+      }
+
+      const steamPuffs = [];
+      for (let i = 0; i < 22; i++) {
+        steamPuffs.push({
+          x: W * 0.38 + rand() * W * 0.24,
+          y: H * 0.62 + rand() * H * 0.2,
+          r: 90 + rand() * 150,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          alpha: 0.03 + rand() * 0.05
+        });
+      }
+
+      const bokeh = [];
+      for (let i = 0; i < 24; i++) {
+        bokeh.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 20 + rand() * 80,
+          alpha: 0.05 + rand() * 0.10
+        });
+      }
+
+      // ============ LAYER 1 — KITCHEN BACKGROUND (warm golden) ============
+      function drawBg(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#241a10');
+        bg.addColorStop(0.5, '#1d140c');
+        bg.addColorStop(1, '#120b06');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const windowLight = ctx.createRadialGradient(W * 0.62, H * 0.1, 100, W * 0.62, H * 0.1, 1750);
+        windowLight.addColorStop(0, `rgba(${GOLD},${0.20 + 0.06 * cycle(1, 0.6, t)})`);
+        windowLight.addColorStop(1, `rgba(${GOLD},0)`);
+        ctx.fillStyle = windowLight;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.fillStyle = 'rgba(255,220,170,0.05)';
+        ctx.fillRect(W * 0.52, H * 0.06, W * 0.22, H * 0.13);
+        ctx.strokeStyle = 'rgba(255,220,170,0.12)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(W * 0.52, H * 0.06, W * 0.22, H * 0.13);
+        ctx.strokeStyle = 'rgba(255,220,170,0.08)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(W * 0.52, H * 0.06);
+        ctx.lineTo(W * 0.74, H * 0.19);
+        ctx.moveTo(W * 0.74, H * 0.06);
+        ctx.lineTo(W * 0.52, H * 0.19);
+        ctx.stroke();
+
+        for (let i = 0; i < 18; i++) {
+          const y = H * 0.22 + i * 54;
+          ctx.strokeStyle = 'rgba(255,210,160,0.05)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.bezierCurveTo(W * 0.3, y + (rand() - 0.5) * 30, W * 0.7, y + (rand() - 0.5) * 30, W, y);
+          ctx.stroke();
+        }
+
+        for (let i = 0; i < 5; i++) {
+          const sx = W * 0.08 + i * (W * 0.2);
+          ctx.fillStyle = 'rgba(50,35,22,0.6)';
+          ctx.fillRect(sx, H * 0.30, 12, H * 0.30);
+          ctx.fillStyle = 'rgba(90,62,38,0.5)';
+          ctx.beginPath();
+          ctx.arc(sx + 6, H * 0.30, 26, Math.PI, 0);
+          ctx.fill();
+        }
+      }
+
+      // ============ LAYER 2 — COUNTER + BOWL + UTENSILS ============
+      function drawCounter(t) {
+        const cy = H * 0.68;
+        const grad = ctx.createLinearGradient(0, cy, 0, H);
+        grad.addColorStop(0, '#4a3420');
+        grad.addColorStop(0.08, '#3a2817');
+        grad.addColorStop(1, '#241608');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, cy, W, H - cy);
+
+        ctx.strokeStyle = 'rgba(255,220,170,0.14)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, cy);
+        ctx.lineTo(W, cy);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(30,20,12,0.8)';
+        ctx.beginPath();
+        ctx.roundRect(W * 0.30, cy + 60, 300, 190, 10);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,236,200,0.9)';
+        ctx.beginPath();
+        ctx.arc(W * 0.45, cy + 80, 140, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,220,170,0.85)';
+        ctx.beginPath();
+        ctx.ellipse(W * 0.45, cy + 96, 150, 34, 0, 0, TAU);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(70,48,28,0.9)';
+        ctx.fillRect(W * 0.10, cy + 40, 320, 16);
+        ctx.fillStyle = 'rgba(90,62,38,0.9)';
+        ctx.fillRect(W * 0.78, cy + 50, 300, 14);
+
+        ctx.fillStyle = 'rgba(120,84,50,0.8)';
+        ctx.save();
+        ctx.translate(W * 0.88, cy + 44);
+        ctx.rotate(-0.12);
+        ctx.fillRect(0, 0, 90, 12);
+        ctx.fillRect(0, 34, 90, 12);
+        ctx.fillRect(6, 12, 12, 22);
+        ctx.fillRect(72, 12, 12, 22);
+        ctx.restore();
+      }
+
+      // ============ LAYER 3 — DOUGH + HANDS (hero, sharp) ============
+      function drawDough(t) {
+        const dx = W * 0.52, dy = H * 0.76;
+        const knead = 0.5 + 0.5 * cycle(3, 0.8, t);
+
+        const shadow = ctx.createRadialGradient(dx, dy + 40, 20, dx, dy + 40, 300);
+        shadow.addColorStop(0, 'rgba(0,0,0,0.35)');
+        shadow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = shadow;
+        ctx.beginPath();
+        ctx.ellipse(dx, dy + 40, 330, 70, 0, 0, TAU);
+        ctx.fill();
+
+        const doughGrad = ctx.createRadialGradient(dx - 60, dy - 60, 30, dx, dy, 300);
+        doughGrad.addColorStop(0, `rgba(240,196,132,${0.85 + knead * 0.12})`);
+        doughGrad.addColorStop(0.6, `rgba(${DOUGH},0.95)`);
+        doughGrad.addColorStop(1, `rgba(168,124,76,0.98)`);
+        ctx.fillStyle = doughGrad;
+        ctx.beginPath();
+        ctx.ellipse(dx, dy, 300 + knead * 50, 105 + knead * 45, 0, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255,240,210,0.30)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.ellipse(dx - 40, dy - 20, 120, 30, -0.2, 0, TAU);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(214,166,108,0.6)';
+        for (let i = 0; i < 6; i++) {
+          const px = dx - 240 + i * 96 + knead * 40;
+          ctx.beginPath();
+          ctx.ellipse(px, dy + 80, 26, 14, 0.2, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawHands(t) {
+        const press = 0.5 + 0.5 * cycle(3, 0.8, t);
+        const dy = H * 0.76;
+
+        ctx.save();
+        ctx.translate(W * 0.52 - 210, dy - 260);
+        ctx.rotate(-0.22 + press * 0.12);
+        ctx.fillStyle = 'rgba(214,150,110,0.95)';
+        ctx.strokeStyle = 'rgba(160,105,75,0.6)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(-40, 0, 90, 240, 42);
+        ctx.fill();
+        ctx.stroke();
+        for (let i = 0; i < 4; i++) {
+          ctx.fillStyle = 'rgba(214,150,110,0.95)';
+          ctx.beginPath();
+          ctx.roundRect(-56 + i * 26, 205, 30, 75, 15);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(160,105,75,0.4)';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(W * 0.52 + 210, dy - 240 + press * 90);
+        ctx.rotate(0.25 - press * 0.14);
+        ctx.fillStyle = 'rgba(196,132,96,0.95)';
+        ctx.strokeStyle = 'rgba(150,95,66,0.6)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(-48, -20, 92, 250, 44);
+        ctx.fill();
+        ctx.stroke();
+        for (let i = 0; i < 4; i++) {
+          ctx.fillStyle = 'rgba(196,132,96,0.95)';
+          ctx.beginPath();
+          ctx.roundRect(-62 + i * 28, 180, 32, 78, 15);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(150,95,66,0.4)';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // ============ LAYER 3B — KITCHEN PROPS (rolling pin, timer, jars) ============
+      function drawProps(t) {
+        const cy = H * 0.68;
+
+        ctx.save();
+        ctx.translate(W * 0.75, cy + 120);
+        ctx.rotate(-0.5 + cycle(1, 0.9, t) * 0.06);
+        ctx.fillStyle = '#7a5a38';
+        ctx.beginPath();
+        ctx.roundRect(-180, -28, 360, 56, 26);
+        ctx.fill();
+        ctx.fillStyle = '#5a4028';
+        ctx.beginPath();
+        ctx.roundRect(-150, -20, 300, 42, 18);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,240,210,0.15)';
+        ctx.beginPath();
+        ctx.roundRect(-160, -26, 130, 50, 24);
+        ctx.fill();
+        ctx.restore();
+
+        const timerX = W * 0.16, timerY = H * 0.30;
+        ctx.fillStyle = 'rgba(30,24,16,0.92)';
+        ctx.beginPath();
+        ctx.roundRect(timerX - 90, timerY - 90, 180, 180, 18);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,210,160,0.25)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(220,210,190,0.15)';
+        ctx.beginPath();
+        ctx.arc(timerX, timerY, 62, 0, TAU);
+        ctx.fill();
+
+        const elapsed = (t * 6) % 60;
+        const secAngle = (elapsed / 60) * TAU - Math.PI / 2;
+        ctx.strokeStyle = 'rgba(255,190,110,0.8)';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(timerX, timerY);
+        ctx.lineTo(timerX + Math.cos(secAngle) * 46, timerY + Math.sin(secAngle) * 46);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,210,160,0.9)';
+        ctx.font = '26px monospace';
+        const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const ss = String(Math.floor(elapsed % 60)).padStart(2, '0');
+        ctx.fillText(mm + ':' + ss, timerX - 38, timerY + 46);
+
+        const jars = [
+          { x: W * 0.07, y: H * 0.30, c: '#c9a06a', label: 'FLOUR' },
+          { x: W * 0.14, y: H * 0.38, c: '#b08858', label: 'SUGAR' },
+          { x: W * 0.08, y: H * 0.46, c: '#d4b078', label: 'SALT' }
+        ];
+        for (let j = 0; j < jars.length; j++) {
+          const jr = jars[j];
+          ctx.fillStyle = 'rgba(40,30,18,0.9)';
+          ctx.beginPath();
+          ctx.roundRect(jr.x - 55, jr.y - 100, 110, 200, 12);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(90,65,40,0.95)';
+          ctx.fillRect(jr.x - 55, jr.y - 110, 110, 24);
+          ctx.fillStyle = jr.c;
+          ctx.fillRect(jr.x - 45, jr.y - 85, 90, 170);
+          ctx.fillStyle = 'rgba(80,55,30,0.7)';
+          ctx.font = '22px monospace';
+          ctx.fillText(jr.label, jr.x - 33, jr.y + 10);
+        }
+      }
+
+      // ============ LAYER 3C — FLOUR BURST (sync dengan knead cycle) ============
+      const burstParticles = [];
+      for (let i = 0; i < 36; i++) {
+        burstParticles.push({
+          angle: rand() * TAU,
+          dist: 60 + rand() * 120,
+          ph: rand() * TAU,
+          size: 3 + rand() * 6,
+          k: 2 + Math.floor(rand() * 3)
+        });
+      }
+
+      function drawFlourBurst(t) {
+        const knead = 0.5 + 0.5 * cycle(3, 0.8, t);
+        const cx = W * 0.52, cy = H * 0.70;
+        const burstIntensity = Math.max(0, 1 - Math.abs(knead - 0.95) * 6);
+
+        if (burstIntensity < 0.05) return;
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < burstParticles.length; i++) {
+          const bp = burstParticles[i];
+          const spread = burstIntensity * bp.dist;
+          const px = cx + Math.cos(bp.angle) * spread;
+          const py = cy + Math.sin(bp.angle) * spread * 0.6 - burstIntensity * 40;
+          const fade = Math.max(0, 1 - spread / (bp.dist + 120));
+          ctx.fillStyle = `rgba(255,244,220,${0.28 * burstIntensity * fade})`;
+          ctx.beginPath();
+          ctx.arc(px, py, bp.size * fade, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 4 — STEAM + FLOUR + BOKEH ============
+      function drawSteam(t) {
+        for (let i = 0; i < steamPuffs.length; i++) {
+          const sp = steamPuffs[i];
+          const sx = sp.x + cycle(sp.k, sp.ph, t) * 60;
+          const sy = sp.y + cycle(sp.k + 1, sp.ph * 2, t) * 40 - cycle(1, sp.ph, t) * 50;
+          const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, sp.r);
+          g.addColorStop(0, `rgba(255,240,215,${sp.alpha * 0.8})`);
+          g.addColorStop(1, 'rgba(255,240,215,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(sx - sp.r, sy - sp.r, sp.r * 2, sp.r * 2);
+        }
+      }
+
+      function drawFlour(t) {
+        for (let i = 0; i < flourMotes.length; i++) {
+          const m = flourMotes[i];
+          const mx = m.x + cycle(m.k, m.ph, t) * 90;
+          const my = m.y + cycle(m.k + 1, m.ph * 2, t) * 60;
+          const pulse = 0.4 + 0.6 * (0.5 + 0.5 * cycle(2, m.ph, t));
+          ctx.fillStyle = `rgba(${CREAM},${m.alpha * pulse})`;
+          ctx.beginPath();
+          ctx.arc(mx, my, m.size * pulse, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawBokeh(t) {
+        for (let i = 0; i < bokeh.length; i++) {
+          const b = bokeh[i];
+          const bx = b.x + cycle(b.k, b.ph, t) * 140;
+          const by = b.y + cycle(b.k + 1, b.ph * 2, t) * 100;
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, b.size);
+          g.addColorStop(0, `rgba(${GOLD},${b.alpha})`);
+          g.addColorStop(0.7, `rgba(${GOLD},${b.alpha * 0.3})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(bx, by, b.size, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      // ============ LAYER 5 — FILM (Portra look: halation + grain + warm) ============
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.04})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawHalation(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 1.9, t);
+        const h = ctx.createRadialGradient(W * 0.62, H * 0.10, 40, W * 0.62, H * 0.10, 1500);
+        h.addColorStop(0, `rgba(255,220,160,${0.05 + pulse * 0.04})`);
+        h.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = h;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.58)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawDOF() {
+        ctx.fillStyle = 'rgba(14,9,5,0.14)';
+        ctx.fillRect(0, 0, W, H);
+        const b1 = ctx.createLinearGradient(0, 0, 0, 300);
+        b1.addColorStop(0, 'rgba(0,0,0,0.34)');
+        b1.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b1;
+        ctx.fillRect(0, 0, W, 300);
+        const b2 = ctx.createLinearGradient(0, H, 0, H - 300);
+        b2.addColorStop(0, 'rgba(0,0,0,0.30)');
+        b2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b2;
+        ctx.fillRect(0, H - 300, W, 300);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawBg(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.4, cam.y * 0.4);
+        drawCounter(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.75, cam.y * 0.75);
+        ctx.rotate(cam.r * 0.6);
+        drawDough(t);
+        drawHands(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawFlourBurst(t);
+        drawSteam(t);
+        ctx.restore();
+
+        drawProps(t);
+
+        drawBokeh(t);
+        drawFlour(t);
+        drawDOF();
+        drawHalation(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['kitchen-dough'] = tl;
+    </script>
+  </div>
+</template>

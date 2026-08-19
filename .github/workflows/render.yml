@@ -1,0 +1,67 @@
+name: Render Videos
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        comp:
+          - "01-human-ai-collab"
+          - "02-vertical-farm"
+          - "03-neurodiversity-desk"
+          - "04-silver-economy"
+          - "05-spatial-computing"
+          - "06-creator-studio"
+          - "07-soil-macro"
+          - "08-kitchen-dough"
+          - "09-film-tank"
+          - "10-sponge-city"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Render 4K60 MP4
+        run: npx --yes hyperframes@0.8.3 render -c compositions/${{ matrix.comp }}.html -f 60 -q high -o renders/${{ matrix.comp }}.mp4
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-${{ matrix.comp }}
+          path: renders/${{ matrix.comp }}.mp4
+          retention-days: 90
+          if-no-files-found: error
+
+  release:
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: renders
+          merge-multiple: true
+
+      - name: Create GitHub Release with MP4s
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          count=$(ls renders/*.mp4 | wc -l)
+          echo "Collected $count MP4 files"
+          gh release create "render-$(date +%Y%m%d-%H%M)" renders/*.mp4 \
+            --title "Rendered backgrounds $(date +%Y-%m-%d)" \
+            --notes "10 seamless-loop 4K 60fps backgrounds rendered via HyperFrames"

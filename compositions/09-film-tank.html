@@ -1,0 +1,514 @@
+<template id="film-tank-template">
+  <div id="film-tank-root" data-composition-id="film-tank" data-width="3840" data-height="2160">
+    <canvas id="ft-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #film-tank-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #0a0202;
+        overflow: hidden;
+      }
+      #ft-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('ft-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0x9F0D42A);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 1.1, t) * 34,
+          y: H / 2 + cycle(2, 2.8, t) * 18,
+          s: 1 + cycle(1, 4.8, t) * 0.022,
+          r: cycle(1, 0.5, t) * 0.002
+        };
+      }
+
+      const RED = '255,60,35';
+      const RED_DIM = '200,40,25';
+      const STEEL = '210,215,225';
+      const STEEL_DARK = '90,95,105';
+
+      const bubbles = [];
+      for (let i = 0; i < 130; i++) {
+        bubbles.push({
+          x: rand() * W,
+          y: rand() * H,
+          size: 2 + rand() * 9,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          wob: rand() * TAU
+        });
+      }
+
+      const bokeh = [];
+      for (let i = 0; i < 26; i++) {
+        bokeh.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 18 + rand() * 70,
+          alpha: 0.05 + rand() * 0.09
+        });
+      }
+
+      // ============ LAYER 1 — DARKROOM (red safelight) ============
+      function drawDarkroom(t) {
+        const bg = ctx.createRadialGradient(W / 2, H / 2, 150, W / 2, H / 2, 2150);
+        bg.addColorStop(0, '#180807');
+        bg.addColorStop(0.6, '#0e0403');
+        bg.addColorStop(1, '#050101');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const safePulse = 0.5 + 0.5 * cycle(1, 0.3, t);
+        const safeGlow = ctx.createRadialGradient(W / 2, H / 2, 200, W / 2, H / 2, 2000);
+        safeGlow.addColorStop(0, `rgba(${RED},${0.05 + safePulse * 0.045})`);
+        safeGlow.addColorStop(0.5, `rgba(${RED},${0.02})`);
+        safeGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = safeGlow;
+        ctx.fillRect(0, 0, W, H);
+
+        const bulb = { x: W * 0.82, y: H * 0.14 };
+        ctx.fillStyle = `rgba(255,80,50,${0.7 + safePulse * 0.3})`;
+        ctx.beginPath();
+        ctx.arc(bulb.x, bulb.y, 14, 0, TAU);
+        ctx.fill();
+        const bg2 = ctx.createRadialGradient(bulb.x, bulb.y, 2, bulb.x, bulb.y, 500);
+        bg2.addColorStop(0, `rgba(${RED},${0.20 + safePulse * 0.15})`);
+        bg2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = bg2;
+        ctx.fillRect(bulb.x - 500, bulb.y - 500, 1000, 1000);
+      }
+
+      // ============ LAYER 2 — STEEL TANK (hero) ============
+      function drawTank(t) {
+        const tx = W / 2, ty = H / 2;
+        const tilt = cycle(1, 1.6, t) * 0.28;
+        const roll = cycle(2, 0.9, t) * 0.5;
+
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.rotate(tilt);
+
+        const bodyGrad = ctx.createLinearGradient(-260, 0, 260, 0);
+        bodyGrad.addColorStop(0, '#1c1c20');
+        bodyGrad.addColorStop(0.25, '#323238');
+        bodyGrad.addColorStop(0.5, '#3f3f46');
+        bodyGrad.addColorStop(0.75, '#2a2a30');
+        bodyGrad.addColorStop(1, '#18181c');
+        ctx.fillStyle = bodyGrad;
+        ctx.beginPath();
+        ctx.roundRect(-250, -520, 500, 1040, 26);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(-250, -520, 500, 1040);
+
+        const lidGrad = ctx.createLinearGradient(-280, 0, 280, 0);
+        lidGrad.addColorStop(0, '#2a2a30');
+        lidGrad.addColorStop(0.5, '#46464e');
+        lidGrad.addColorStop(1, '#26262c');
+        ctx.fillStyle = lidGrad;
+        ctx.beginPath();
+        ctx.roundRect(-270, -580, 540, 70, 18);
+        ctx.fill();
+
+        ctx.fillStyle = '#141418';
+        ctx.beginPath();
+        ctx.arc(0, -545, 26, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = '#3a3a42';
+        ctx.beginPath();
+        ctx.arc(0, -545, 16, 0, TAU);
+        ctx.fill();
+
+        const liquidH = 300 + cycle(1, 0.2, t) * 70;
+        const liqGrad = ctx.createLinearGradient(0, -liquidH / 2, 0, liquidH / 2);
+        liqGrad.addColorStop(0, 'rgba(150,26,18,0.82)');
+        liqGrad.addColorStop(0.5, 'rgba(90,14,10,0.9)');
+        liqGrad.addColorStop(1, 'rgba(50,8,6,0.95)');
+        ctx.fillStyle = liqGrad;
+        ctx.fillRect(-244, -liquidH / 2, 488, liquidH);
+
+        const surfWave = cycle(2, 0.4, t) * 8 + cycle(1, 2.2, t) * 4;
+        ctx.fillStyle = 'rgba(200,40,28,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(-244, -liquidH / 2 + surfWave);
+        for (let x = -244; x <= 244; x += 32) {
+          ctx.lineTo(x, -liquidH / 2 + Math.sin(x * 0.02 + t * 1.4) * 10 + surfWave);
+        }
+        ctx.lineTo(244, -liquidH / 2 + 26);
+        ctx.lineTo(-244, -liquidH / 2 + 26);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255,120,90,0.15)';
+        ctx.fillRect(-244, -liquidH / 2, 488, 6);
+
+        const reels = [
+          { y: -300, r: 90 },
+          { y: -60, r: 90 },
+          { y: 180, r: 90 },
+          { y: 420, r: 70 }
+        ];
+        for (let i = 0; i < reels.length; i++) {
+          const rl = reels[i];
+          const spin = t * 1.2 * (i % 2 === 0 ? 1 : -1) + i * 0.5;
+          ctx.save();
+          ctx.translate(0, rl.y + roll * 20);
+          ctx.rotate(spin * 0.4);
+          ctx.strokeStyle = 'rgba(220,225,235,0.25)';
+          ctx.lineWidth = 7;
+          ctx.beginPath();
+          ctx.arc(0, 0, rl.r, 0, TAU);
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(150,155,165,0.2)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, rl.r * 0.55, 0, TAU);
+          ctx.stroke();
+          for (let s = 0; s < 6; s++) {
+            const sa = s * TAU / 6 + spin * 0.4;
+            ctx.fillStyle = 'rgba(180,185,195,0.3)';
+            ctx.beginPath();
+            ctx.arc(Math.cos(sa) * rl.r * 0.8, Math.sin(sa) * rl.r * 0.8, 8, 0, TAU);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        const shine = ctx.createLinearGradient(-250, -520, 80, -520);
+        shine.addColorStop(0, 'rgba(255,255,255,0.10)');
+        shine.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = shine;
+        ctx.fillRect(-250, -520, 330, 1040);
+
+        const redReflect = ctx.createLinearGradient(0, -liquidH / 2, 0, 300);
+        redReflect.addColorStop(0, 'rgba(255,60,35,0.10)');
+        redReflect.addColorStop(1, 'rgba(255,60,35,0)');
+        ctx.fillStyle = redReflect;
+        ctx.fillRect(-250, -300, 500, 600);
+        ctx.restore();
+      }
+
+      // ============ LAYER 2B — TANK LABEL + DEVELOPER BOTTLES ============
+      function drawLabels(t) {
+        const tx = W / 2, ty = H / 2;
+        const tilt = cycle(1, 1.6, t) * 0.28;
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.rotate(tilt);
+
+        ctx.fillStyle = 'rgba(220,225,235,0.85)';
+        ctx.beginPath();
+        ctx.roundRect(-180, -80, 360, 70, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,125,135,0.6)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#2a2a30';
+        ctx.font = 'bold 30px monospace';
+        ctx.fillText('D-76 DEVELOPER', -150, -36);
+        ctx.fillStyle = '#6a3030';
+        ctx.fillText('AGITATE 30s', -150, 4);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        for (let i = 0; i < 4; i++) {
+          ctx.fillRect(-160 + i * 84, -62, 70, 44);
+        }
+        ctx.restore();
+      }
+
+      function drawBottles(t) {
+        const bottles = [
+          { x: W * 0.14, y: H * 0.30, label: 'DEV', c: 'rgba(190,40,30,0.55)' },
+          { x: W * 0.20, y: H * 0.42, label: 'STOP', c: 'rgba(230,180,60,0.4)' },
+          { x: W * 0.14, y: H * 0.54, label: 'FIX', c: 'rgba(120,140,170,0.4)' }
+        ];
+        for (let b = 0; b < bottles.length; b++) {
+          const bt = bottles[b];
+          const sway = cycle(1, b * 1.3, t) * 4;
+          ctx.save();
+          ctx.translate(bt.x + sway, bt.y);
+          ctx.rotate(cycle(2, b * 0.9, t) * 0.015);
+          ctx.fillStyle = 'rgba(30,28,30,0.9)';
+          ctx.beginPath();
+          ctx.roundRect(-50, -170, 100, 230, 14);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(50,46,50,0.9)';
+          ctx.fillRect(-54, -190, 108, 30);
+          ctx.fillStyle = bt.c;
+          ctx.fillRect(-40, -155, 80, 190);
+          ctx.fillStyle = 'rgba(255,220,200,0.7)';
+          ctx.font = '24px monospace';
+          ctx.fillText(bt.label, -22, -100);
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.fillRect(-40, -155, 16, 190);
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 2C — DARKROOM TIMER (red LED countdown) ============
+      function drawTimer(t) {
+        const tx = W * 0.86, ty = H * 0.24;
+        const remaining = Math.ceil(((15 - (t * 5) % 15) + 14.999) % 15);
+
+        ctx.fillStyle = 'rgba(20,8,8,0.92)';
+        ctx.beginPath();
+        ctx.roundRect(tx - 120, ty - 70, 240, 140, 12);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,80,50,0.3)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(60,8,6,0.9)';
+        ctx.beginPath();
+        ctx.roundRect(tx - 96, ty - 44, 192, 64, 8);
+        ctx.fill();
+
+        const blink = cycle(4, 0.2, t) > 0.5;
+        ctx.fillStyle = blink ? '#ff4028' : '#8a1a10';
+        ctx.font = 'bold 44px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(remaining).padStart(2, '0'), tx, ty + 14);
+        ctx.textAlign = 'left';
+
+        ctx.fillStyle = 'rgba(255,80,50,0.4)';
+        ctx.font = '20px monospace';
+        ctx.fillText('TIME', tx - 40, ty + 48);
+
+        const tg = ctx.createRadialGradient(tx, ty, 5, tx, ty, 160);
+        tg.addColorStop(0, `rgba(255,60,40,${0.10 + (blink ? 0.08 : 0)})`);
+        tg.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = tg;
+        ctx.fillRect(tx - 160, ty - 160, 320, 320);
+      }
+
+      // ============ LAYER 3 — BUBBLES (rising, DOF) ============
+      function drawBubbles(t) {
+        for (let i = 0; i < bubbles.length; i++) {
+          const b = bubbles[i];
+          const bx = b.x + Math.sin(t * 1.2 + b.wob) * 40 * b.size / 6;
+          const by = b.y - ((t * 120 * (0.6 + b.size / 12) + b.ph * 900) % (H + 100));
+          if (by < -40) continue;
+          const pulse = 0.5 + 0.5 * cycle(b.k, b.ph, t);
+          ctx.strokeStyle = `rgba(255,140,110,${0.14 + pulse * 0.16})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(bx, by, b.size, 0, TAU);
+          ctx.stroke();
+          ctx.fillStyle = `rgba(255,170,140,${0.025 + pulse * 0.03})`;
+          ctx.fill();
+          ctx.fillStyle = `rgba(255,220,200,${0.30 + pulse * 0.2})`;
+          ctx.beginPath();
+          ctx.arc(bx - b.size * 0.3, by - b.size * 0.3, b.size * 0.18, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawBokeh(t) {
+        for (let i = 0; i < bokeh.length; i++) {
+          const b = bokeh[i];
+          const bx = b.x + cycle(b.k, b.ph, t) * 120;
+          const by = b.y + cycle(b.k + 1, b.ph * 2, t) * 80;
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, b.size);
+          g.addColorStop(0, `rgba(${RED},${b.alpha})`);
+          g.addColorStop(0.7, `rgba(${RED},${b.alpha * 0.3})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(bx, by, b.size, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      // ============ LAYER 3B — REEL SPOOL + FILM STRIP (hanging leader) ============
+      function drawReel(t) {
+        const rx = W * 0.12, ry = H * 0.75;
+        const spin = t * 30;
+
+        ctx.save();
+        ctx.translate(rx, ry);
+        ctx.rotate(spin);
+        ctx.fillStyle = '#141416';
+        ctx.beginPath();
+        ctx.arc(0, 0, 90, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = '#2a2a30';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, 68, 0, TAU);
+        ctx.stroke();
+        for (let a = 0; a < 6; a++) {
+          ctx.fillStyle = '#1e1e24';
+          ctx.beginPath();
+          ctx.arc(Math.cos(a) * 34, Math.sin(a) * 34, 9, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+
+        const stripX = rx - 30;
+        const stripLen = 300;
+        for (let i = 0; i < 12; i++) {
+          const sy = ry + 80 + i * 20;
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(20,20,24,0.9)' : 'rgba(28,28,34,0.9)';
+          ctx.fillRect(stripX, sy, 60, 18);
+          ctx.fillStyle = 'rgba(220,220,230,0.5)';
+          ctx.fillRect(stripX + 2, sy + 2, 8, 14);
+          ctx.fillRect(stripX + 50, sy + 2, 8, 14);
+        }
+
+        ctx.fillStyle = 'rgba(60,60,70,0.15)';
+        ctx.fillRect(stripX - 8, ry + 80, 4, 240);
+        ctx.fillRect(stripX + 66, ry + 80, 4, 240);
+      }
+
+      // ============ LAYER 3C — CHEMICAL LEVEL GAUGES (floating markers) ============
+      const gauges = [
+        { x: W * 0.32, y: H * 0.18, label: 'DEV 68F' },
+        { x: W * 0.44, y: H * 0.24, label: 'STOP 60F' },
+        { x: W * 0.56, y: H * 0.18, label: 'FIX 65F' }
+      ];
+
+      function drawGauges(t) {
+        ctx.save();
+        ctx.font = '20px monospace';
+        for (let i = 0; i < gauges.length; i++) {
+          const g = gauges[i];
+          const bob = cycle(2, i * 1.3, t) * 14;
+          ctx.fillStyle = 'rgba(200,60,50,0.5)';
+          ctx.fillRect(g.x - 4, g.y + bob, 8, 34);
+          ctx.fillStyle = 'rgba(255,120,100,0.6)';
+          ctx.fillRect(g.x - 2, g.y + bob, 4, 16);
+          ctx.fillStyle = 'rgba(255,180,160,0.5)';
+          ctx.fillText(g.label, g.x + 14, g.y + 26 + bob * 0.3);
+        }
+        ctx.restore();
+      }
+
+      // ============ LAYER 4 — FILM (heavy grain, vignette, DOF) ============
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1800; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          const bright = hash(i, frame + 12000);
+          ctx.fillStyle = `rgba(255,255,255,${bright * 0.05})`;
+          ctx.fillRect(gx, gy, gs, gs);
+          if (bright > 0.985) {
+            ctx.fillStyle = `rgba(255,120,90,${(bright - 0.985) / 0.015 * 0.10})`;
+            ctx.fillRect(gx, gy, gs + 1, gs + 1);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.72)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawDOF() {
+        ctx.fillStyle = 'rgba(5,1,1,0.20)';
+        ctx.fillRect(0, 0, W, H);
+        const b1 = ctx.createLinearGradient(0, 0, 0, 300);
+        b1.addColorStop(0, 'rgba(0,0,0,0.42)');
+        b1.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b1;
+        ctx.fillRect(0, 0, W, 300);
+        const b2 = ctx.createLinearGradient(0, H, 0, H - 300);
+        b2.addColorStop(0, 'rgba(0,0,0,0.40)');
+        b2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b2;
+        ctx.fillRect(0, H - 300, W, 300);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawDarkroom(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.4, cam.y * 0.4);
+        drawBokeh(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawTank(t);
+        drawLabels(t);
+        drawBubbles(t);
+        drawReel(t);
+        drawGauges(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.6, cam.y * 0.6);
+        drawBottles(t);
+        drawTimer(t);
+        ctx.restore();
+
+        drawDOF();
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['film-tank'] = tl;
+    </script>
+  </div>
+</template>

@@ -1,0 +1,525 @@
+<template id="creator-studio-template">
+  <div id="creator-studio-root" data-composition-id="creator-studio" data-width="3840" data-height="2160">
+    <canvas id="cs-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #creator-studio-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #0a0a0d;
+        overflow: hidden;
+      }
+      #cs-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('cs-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0xCC02A44);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 0.2, t) * 70,
+          y: H / 2 + cycle(2, 1.7, t) * 26,
+          s: 1 + cycle(1, 4.4, t) * 0.03,
+          r: cycle(1, 2.6, t) * 0.004
+        };
+      }
+
+      const RGY = '255,60,80';
+      const RGB1 = '255,80,120';
+      const RGB2 = '80,255,180';
+      const RGB3 = '80,140,255';
+
+      const rgbBars = [
+        { x: W * 0.14, hue: 350, ph: 0.3 },
+        { x: W * 0.50, hue: 155, ph: 2.1 },
+        { x: W * 0.86, hue: 220, ph: 4.0 }
+      ];
+
+      const dust = [];
+      for (let i = 0; i < 110; i++) {
+        dust.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 1.5 + rand() * 4,
+          alpha: 0.04 + rand() * 0.10
+        });
+      }
+
+      const keyLights = [];
+      for (let i = 0; i < 5; i++) {
+        keyLights.push({
+          x: W * 0.10 + rand() * W * 0.80,
+          y: H * 0.20 + rand() * H * 0.2,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          r: 20 + rand() * 26
+        });
+      }
+
+      // ============ LAYER 1 — ROOM + RGB TUBES ============
+      function drawRoom(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#101014');
+        bg.addColorStop(0.5, '#0b0b0e');
+        bg.addColorStop(1, '#060608');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 20; i++) {
+          const y = H * 0.12 + i * 70;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+          ctx.stroke();
+        }
+
+        for (let b = 0; b < rgbBars.length; b++) {
+          const bar = rgbBars[b];
+          const hueShift = (bar.hue + cycle(1, bar.ph, t) * 14) % 360;
+          const intensity = 0.5 + 0.5 * cycle(2, bar.ph, t);
+
+          const barGrad = ctx.createLinearGradient(bar.x, 0, bar.x, H);
+          barGrad.addColorStop(0, `hsla(${hueShift}, 92%, 60%, ${0.16 * intensity})`);
+          barGrad.addColorStop(0.35, `hsla(${hueShift}, 92%, 60%, ${0.05 * intensity})`);
+          barGrad.addColorStop(1, 'hsla(0,0%,0%,0)');
+          ctx.fillStyle = barGrad;
+          ctx.fillRect(bar.x - 190, 0, 380, H);
+
+          ctx.fillStyle = `hsla(${hueShift}, 95%, 65%, ${0.75 * intensity})`;
+          ctx.fillRect(bar.x - 26, 0, 52, H);
+          ctx.fillStyle = `hsla(${hueShift}, 95%, 80%, ${0.9 * intensity})`;
+          ctx.fillRect(bar.x - 5, 0, 10, H);
+        }
+
+        const spill = ctx.createRadialGradient(W / 2, H * 0.5, 100, W / 2, H * 0.5, 1900);
+        spill.addColorStop(0, 'rgba(255,255,255,0.03)');
+        spill.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = spill;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // ============ LAYER 2 — CAMERA SLIDER RIG ============
+      function drawSlider(t) {
+        const sliderY = H * 0.62;
+        const travel = cycle(1, 0.9, t) * 360;
+        const camX = W / 2 + travel;
+
+        ctx.fillStyle = '#1a1a1e';
+        ctx.fillRect(W * 0.16, sliderY - 10, W * 0.68, 20);
+        ctx.fillStyle = '#26262c';
+        ctx.fillRect(W * 0.17, sliderY - 6, W * 0.66, 12);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(W * 0.16, sliderY + 10);
+        ctx.lineTo(W * 0.84, sliderY + 10);
+        ctx.stroke();
+
+        ctx.fillStyle = '#222226';
+        ctx.beginPath();
+        ctx.roundRect(camX - 190, sliderY - 90, 380, 80, 12);
+        ctx.fill();
+
+        ctx.fillStyle = '#111114';
+        ctx.beginPath();
+        ctx.roundRect(camX - 160, sliderY - 74, 200, 48, 8);
+        ctx.fill();
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(camX - 150, sliderY - 66, 180, 34);
+        ctx.fillStyle = 'rgba(120,140,255,0.15)';
+        ctx.fillRect(camX - 150, sliderY - 66, 180, 34);
+
+        const lensGrad = ctx.createLinearGradient(camX + 40, sliderY - 60, camX + 120, sliderY - 60);
+        lensGrad.addColorStop(0, '#2a2a30');
+        lensGrad.addColorStop(0.5, '#3a3a42');
+        lensGrad.addColorStop(1, '#22222a');
+        ctx.fillStyle = lensGrad;
+        ctx.beginPath();
+        ctx.roundRect(camX + 40, sliderY - 70, 130, 60, 10);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(140,180,255,0.2)';
+        ctx.beginPath();
+        ctx.arc(camX + 105, sliderY - 40, 20, 0, TAU);
+        ctx.fill();
+
+        const tally = cycle(5, 0.4, t) > 0.25;
+        ctx.fillStyle = tally ? '#ff2530' : '#3a0d10';
+        ctx.beginPath();
+        ctx.arc(camX + 200, sliderY - 70, 12, 0, TAU);
+        ctx.fill();
+        if (tally) {
+          const tg = ctx.createRadialGradient(camX + 200, sliderY - 70, 2, camX + 200, sliderY - 70, 70);
+          tg.addColorStop(0, 'rgba(255,40,50,0.5)');
+          tg.addColorStop(1, 'rgba(255,40,50,0)');
+          ctx.fillStyle = tg;
+          ctx.fillRect(camX + 130, sliderY - 140, 140, 140);
+        }
+
+        ctx.fillStyle = '#18181c';
+        ctx.fillRect(camX - 12, sliderY + 10, 24, 160);
+        ctx.fillStyle = '#22222a';
+        for (let leg = -1; leg <= 1; leg += 2) {
+          ctx.save();
+          ctx.translate(camX, sliderY + 170);
+          ctx.rotate(leg * 0.35);
+          ctx.fillRect(-8, 0, 16, 240);
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 3 — MONITOR + MAC + KEY LIGHTS ============
+      function drawMonitor(t) {
+        const mx = W * 0.73, my = H * 0.30;
+        ctx.fillStyle = '#0c0c10';
+        ctx.beginPath();
+        ctx.roundRect(mx - 480, my - 290, 960, 580, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#2a2a32';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+
+        const grad = ctx.createLinearGradient(mx - 470, my - 280, mx + 470, my + 280);
+        grad.addColorStop(0, '#101622');
+        grad.addColorStop(1, '#0a0d16');
+        ctx.fillStyle = grad;
+        ctx.fillRect(mx - 470, my - 280, 940, 560);
+
+        for (let b = 0; b < 40; b++) {
+          const bh = 20 + hash(b, 60) * 160 * (0.4 + 0.6 * (0.5 + 0.5 * cycle(2, b * 0.7, t)));
+          const bx = mx - 450 + b * 23;
+          ctx.fillStyle = `rgba(80,220,255,${0.4 + 0.5 * (0.5 + 0.5 * cycle(3, b * 0.9, t))})`;
+          ctx.fillRect(bx, my + 250 - bh, 15, bh);
+        }
+
+        const scan = ((t * 0.6) % 1) * 540;
+        ctx.fillStyle = 'rgba(120,200,255,0.05)';
+        ctx.fillRect(mx - 470, my - 280 + scan, 940, 12);
+
+        const glow = ctx.createRadialGradient(mx, my, 30, mx, my, 900);
+        glow.addColorStop(0, `rgba(90,180,255,${0.07 + 0.05 * cycle(1, 1.1, t)})`);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(mx - 900, my - 900, 1800, 1800);
+
+        ctx.fillStyle = '#18181e';
+        ctx.fillRect(mx - 46, my + 290, 92, 120);
+        ctx.fillStyle = '#101014';
+        ctx.fillRect(mx - 66, my + 410, 132, 30);
+      }
+
+      function drawMac(t) {
+        const mx = W * 0.22, my = H * 0.42;
+        ctx.fillStyle = '#101014';
+        ctx.beginPath();
+        ctx.roundRect(mx - 260, my - 170, 520, 340, 14);
+        ctx.fill();
+        ctx.strokeStyle = '#2a2a32';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+
+        ctx.fillStyle = '#0c0e14';
+        ctx.fillRect(mx - 250, my - 160, 500, 320);
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(mx - 250, my + 90);
+        ctx.lineTo(mx + 250, my + 90);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,220,120,0.5)';
+        ctx.beginPath();
+        ctx.arc(mx - 160, my - 60, 10, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(120,255,180,0.5)';
+        ctx.beginPath();
+        ctx.arc(mx - 100, my - 60, 10, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(120,140,255,0.5)';
+        ctx.beginPath();
+        ctx.arc(mx - 40, my - 60, 10, 0, TAU);
+        ctx.fill();
+
+        const active = cycle(4, 0.8, t) > 0.3;
+        ctx.fillStyle = active ? 'rgba(255,80,90,0.9)' : 'rgba(255,80,90,0.2)';
+        ctx.beginPath();
+        ctx.arc(mx + 160, my - 60, 9, 0, TAU);
+        ctx.fill();
+
+        ctx.fillStyle = '#20202a';
+        ctx.fillRect(mx - 80, my + 170, 160, 20);
+      }
+
+      function drawKeyLights(t) {
+        for (let i = 0; i < keyLights.length; i++) {
+          const kl = keyLights[i];
+          const pulse = 0.5 + 0.5 * cycle(kl.k, kl.ph, t);
+          const g = ctx.createRadialGradient(kl.x, kl.y, 2, kl.x, kl.y, kl.r * 9);
+          g.addColorStop(0, `rgba(255,240,220,${0.20 * pulse})`);
+          g.addColorStop(0.3, `rgba(255,240,220,${0.06 * pulse})`);
+          g.addColorStop(1, 'rgba(255,240,220,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(kl.x - kl.r * 9, kl.y - kl.r * 9, kl.r * 18, kl.r * 18);
+
+          ctx.fillStyle = `rgba(255,250,240,${0.85 * pulse})`;
+          ctx.beginPath();
+          ctx.arc(kl.x, kl.y, kl.r * 0.8, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      // ============ LAYER 3B — TELEPROMPTER + AUDIO INTERFACE ============
+      function drawTeleprompter(t) {
+        const tx = W * 0.5, ty = H * 0.60;
+
+        ctx.fillStyle = '#101014';
+        ctx.beginPath();
+        ctx.roundRect(tx - 190, ty - 90, 380, 74, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#2e2e36';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.fillStyle = '#0a0a0e';
+        ctx.beginPath();
+        ctx.roundRect(tx - 174, ty - 74, 348, 42, 6);
+        ctx.fill();
+
+        const promptW = 348;
+        const scroll = (t * 120) % (promptW + 500);
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(tx - 174, ty - 74, 348, 42, 6);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(230,240,255,0.85)';
+        ctx.font = '26px monospace';
+        for (let line = 0; line < 6; line++) {
+          const lx = tx - 174 - scroll + line * 340;
+          const text = line % 2 === 0 ? 'WELCOME TO THE CHANNEL' : 'TODAY WE TALK ABOUT AI';
+          ctx.fillText(text, lx, ty - 46);
+        }
+        ctx.restore();
+
+        const mirror = ctx.createLinearGradient(0, ty - 74, 0, ty - 32);
+        mirror.addColorStop(0, 'rgba(160,220,255,0.10)');
+        mirror.addColorStop(1, 'rgba(160,220,255,0.03)');
+        ctx.fillStyle = mirror;
+        ctx.fillRect(tx - 174, ty - 74, 348, 42);
+
+        const teleGlow = ctx.createRadialGradient(tx, ty, 10, tx, ty, 380);
+        teleGlow.addColorStop(0, `rgba(160,220,255,${0.05 + 0.04 * cycle(1, 1.5, t)})`);
+        teleGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = teleGlow;
+        ctx.fillRect(tx - 380, ty - 380, 760, 760);
+
+        ctx.fillStyle = '#1a1a20';
+        ctx.fillRect(tx - 26, ty + 74, 52, 60);
+        ctx.fillStyle = '#141418';
+        ctx.fillRect(tx - 60, ty + 134, 120, 24);
+      }
+
+      function drawAudioInterface(t) {
+        const ax = W * 0.30, ay = H * 0.68;
+        ctx.fillStyle = '#101014';
+        ctx.beginPath();
+        ctx.roundRect(ax - 170, ay - 60, 340, 120, 10);
+        ctx.fill();
+        ctx.strokeStyle = '#2e2e36';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        for (let r = 0; r < 3; r++) {
+          ctx.fillStyle = '#22222a';
+          ctx.beginPath();
+          ctx.arc(ax - 130, ay - 25 + r * 28, 13, 0, TAU);
+          ctx.fill();
+        }
+
+        for (let k = 0; k < 8; k++) {
+          ctx.fillStyle = '#1a1a22';
+          ctx.fillRect(ax - 90 + k * 26, ay - 12, 18, 24);
+          const lit = cycle(4, k * 0.9, t) > 0.5;
+          ctx.fillStyle = lit ? '#ff4a3c' : '#2a0d10';
+          ctx.fillRect(ax - 86 + k * 26, ay - 8, 10, 6);
+        }
+
+        const vu = 0.5 + 0.5 * cycle(2, 0.6, t);
+        ctx.fillStyle = 'rgba(90,220,140,0.5)';
+        ctx.fillRect(ax + 60, ay - 40, 70 * vu, 16);
+        ctx.strokeStyle = 'rgba(90,220,140,0.4)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(ax + 60, ay - 40, 70, 16);
+
+        const meterGlow = ctx.createRadialGradient(ax, ay, 10, ax, ay, 260);
+        meterGlow.addColorStop(0, `rgba(255,120,90,${0.05 + vu * 0.05})`);
+        meterGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = meterGlow;
+        ctx.fillRect(ax - 260, ay - 260, 520, 520);
+      }
+
+      // ============ LAYER 3C — CLAPPERBOARD (scene marker prop) ============
+      function drawClapper(t) {
+        const cx = W * 0.84, cy = H * 0.78;
+        const tilt = 0.35 + cycle(1, 1.8, t) * 0.04;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(tilt);
+        ctx.fillStyle = '#16161a';
+        ctx.beginPath();
+        ctx.roundRect(-120, -70, 240, 140, 6);
+        ctx.fill();
+        ctx.strokeStyle = '#30303a';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.fillStyle = '#d8d8e0';
+        ctx.beginPath();
+        ctx.roundRect(-120, -70, 240, 34, 6);
+        ctx.fill();
+        ctx.fillStyle = '#22222a';
+        for (let i = 0; i < 5; i++) {
+          ctx.fillRect(-105 + i * 50, -62, 28, 18);
+        }
+        ctx.fillStyle = 'rgba(230,230,240,0.7)';
+        ctx.font = '20px monospace';
+        ctx.fillText('SCENE 04', -70, 30);
+        ctx.restore();
+      }
+
+      // ============ LAYER 4 — DUST + FILM ============
+      function drawDust(t) {
+        for (let i = 0; i < dust.length; i++) {
+          const d = dust[i];
+          const dx = d.x + cycle(d.k, d.ph, t) * 100;
+          const dy = d.y + cycle(d.k + 1, d.ph * 2, t) * 60;
+          const pulse = 0.4 + 0.6 * (0.5 + 0.5 * cycle(2, d.ph, t));
+          ctx.fillStyle = `rgba(255,255,255,${d.alpha * pulse})`;
+          ctx.beginPath();
+          ctx.arc(dx, dy, d.size * pulse, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawBokeh(t) {
+        for (let i = 0; i < 26; i++) {
+          const size = 22 + hash(i, 70) * 85;
+          const k = 1 + (i % 3);
+          const bx = hash(i, 71) * W + cycle(k, hash(i, 72) * TAU, t) * 220;
+          const by = hash(i, 73) * H + cycle(k + 1, hash(i, 74) * TAU, t) * 160;
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, size);
+          g.addColorStop(0, `rgba(${hash(i, 75) > 0.5 ? RGB2 : RGB3},${0.07 + hash(i, 76) * 0.07})`);
+          g.addColorStop(0.7, `rgba(${hash(i, 75) > 0.5 ? RGB2 : RGB3},${0.02})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(bx, by, size, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.042})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.30, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.62)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawRoom(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.35, cam.y * 0.35);
+        drawMonitor(t);
+        drawMac(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.7, cam.y * 0.7);
+        ctx.rotate(cam.r * 0.6);
+        drawSlider(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawTeleprompter(t);
+        drawAudioInterface(t);
+        drawKeyLights(t);
+        drawClapper(t);
+        ctx.restore();
+
+        drawBokeh(t);
+        drawDust(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['creator-studio'] = tl;
+    </script>
+  </div>
+</template>

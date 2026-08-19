@@ -1,0 +1,548 @@
+<template id="silver-economy-template">
+  <div id="silver-economy-root" data-composition-id="silver-economy" data-width="3840" data-height="2160">
+    <canvas id="se-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #silver-economy-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #0f0b08;
+        overflow: hidden;
+      }
+      #se-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('se-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0x5174C10);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 0.9, t) * 46,
+          y: H / 2 + cycle(2, 2.7, t) * 22,
+          s: 1 + cycle(1, 5.6, t) * 0.028,
+          r: cycle(2, 0.15, t) * 0.0022
+        };
+      }
+
+      const RIM = '255,196,130';
+      const AMBER = '255,170,90';
+      const CREAM = '255,224,180';
+      const TEAL = '110,220,190';
+
+      const eqBarsL = [];
+      for (let i = 0; i < 30; i++) eqBarsL.push({ ph: rand() * TAU, k: 1 + Math.floor(rand() * 4), h: 30 + rand() * 130 });
+      const eqBarsR = [];
+      for (let i = 0; i < 30; i++) eqBarsR.push({ ph: rand() * TAU, k: 1 + Math.floor(rand() * 4), h: 30 + rand() * 130 });
+
+      const motes = [];
+      for (let i = 0; i < 100; i++) {
+        motes.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 2 + rand() * 5,
+          alpha: 0.05 + rand() * 0.12
+        });
+      }
+
+      // ============ LAYER 1 — ROOM + RIM LIGHT ============
+      function drawRoom(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#1d1610');
+        bg.addColorStop(0.55, '#14100b');
+        bg.addColorStop(1, '#0a0705');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const rim = ctx.createRadialGradient(W * 0.5, H * 0.42, 120, W * 0.5, H * 0.42, 1700);
+        rim.addColorStop(0, `rgba(${RIM},${0.15 + 0.05 * cycle(1, 0.4, t)})`);
+        rim.addColorStop(1, `rgba(${RIM},0)`);
+        ctx.fillStyle = rim;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.strokeStyle = 'rgba(255,200,150,0.05)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 22; i++) {
+          const y = H * 0.18 + i * 60;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.bezierCurveTo(W * 0.35, y + (rand() - 0.5) * 40, W * 0.65, y + (rand() - 0.5) * 40, W, y);
+          ctx.stroke();
+        }
+      }
+
+      // ============ LAYER 2 — DESK + MONITORS ============
+      function drawDesk(t) {
+        const deskY = H * 0.66;
+        ctx.fillStyle = '#241a13';
+        ctx.fillRect(0, deskY, W, H - deskY);
+        ctx.fillStyle = '#2b2017';
+        ctx.fillRect(0, deskY, W, 26);
+        ctx.strokeStyle = 'rgba(255,210,160,0.12)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, deskY + 26);
+        ctx.lineTo(W, deskY + 26);
+        ctx.stroke();
+      }
+
+      function drawMonitor(mx, my, mw, mh, eqBars, t, mirror) {
+        ctx.fillStyle = '#0a0a0a';
+        ctx.beginPath();
+        ctx.roundRect(mx - mw / 2, my - mh / 2, mw, mh, 14);
+        ctx.fill();
+        ctx.strokeStyle = '#33302c';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.roundRect(mx - mw / 2, my - mh / 2, mw, mh, 14);
+        ctx.stroke();
+
+        const screen = ctx.createLinearGradient(0, my - mh / 2, 0, my + mh / 2);
+        screen.addColorStop(0, '#0e1416');
+        screen.addColorStop(1, '#080c0e');
+        ctx.fillStyle = screen;
+        ctx.fillRect(mx - mw / 2 + 8, my - mh / 2 + 8, mw - 16, mh - 16);
+
+        for (let i = 0; i < eqBars.length; i++) {
+          const b = eqBars[i];
+          const bh = b.h * (0.35 + 0.65 * (0.5 + 0.5 * cycle(b.k, b.ph, t)));
+          const bx = mx - mw / 2 + 24 + i * ((mw - 48) / eqBars.length);
+          const grad = ctx.createLinearGradient(0, my + mh / 2 - 20 - bh, 0, my + mh / 2 - 20);
+          grad.addColorStop(0, `rgba(${mirror ? TEAL : AMBER},0.15)`);
+          grad.addColorStop(1, `rgba(${mirror ? TEAL : AMBER},0.9)`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(bx, my + mh / 2 - 20 - bh, (mw - 48) / eqBars.length - 5, bh);
+        }
+
+        const scan = ((t * 0.5 + mirror * 0.5) % 1) * (mh - 30);
+        ctx.fillStyle = `rgba(${mirror ? TEAL : AMBER},0.06)`;
+        ctx.fillRect(mx - mw / 2 + 8, my - mh / 2 + 8 + scan, mw - 16, 10);
+
+        const g = ctx.createRadialGradient(mx, my, 30, mx, my, mw * 0.8);
+        g.addColorStop(0, `rgba(${mirror ? TEAL : AMBER},${0.05 + 0.04 * cycle(1, mirror * 2, t)})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(mx - mw, my - mw, mw * 2, mw * 2);
+
+        ctx.fillStyle = '#1c1a17';
+        ctx.fillRect(mx - 60, my + mh / 2, 120, 90);
+        ctx.fillStyle = '#14120f';
+        ctx.fillRect(mx - 80, my + mh / 2 + 90, 160, 34);
+      }
+
+      // ============ LAYER 3 — MIC + STREAM DECK + WAVEFORM ============
+      function drawMic(t) {
+        const mx = W * 0.5, my = H * 0.44;
+        const sway = cycle(1, 1.2, t) * 10;
+
+        ctx.save();
+        ctx.translate(mx + sway, my);
+
+        ctx.fillStyle = '#202020';
+        ctx.beginPath();
+        ctx.arc(0, 0, 82, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = '#2e2e2e';
+        ctx.beginPath();
+        ctx.arc(0, 0, 62, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = '#3a3a3a';
+        ctx.beginPath();
+        ctx.arc(0, 0, 40, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 72, 0, TAU);
+        ctx.stroke();
+
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(-24, 62, 48, 150);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(-34, 190, 68, 30);
+
+        const vo = 0.5 + 0.5 * cycle(2, 0.7, t);
+        const glow = ctx.createRadialGradient(0, 0, 10, 0, 0, 340);
+        glow.addColorStop(0, `rgba(${RIM},${0.12 + vo * 0.12})`);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(-340, -340, 680, 680);
+        ctx.restore();
+      }
+
+      function drawStreamDeck(t) {
+        const dx = W * 0.84, dy = H * 0.68;
+        ctx.save();
+        ctx.translate(dx, dy);
+
+        ctx.fillStyle = '#151513';
+        ctx.beginPath();
+        ctx.roundRect(-280, -60, 560, 120, 12);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,220,170,0.15)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(-280, -60, 560, 120, 12);
+        ctx.stroke();
+
+        for (let r = 0; r < 2; r++) {
+          for (let c = 0; c < 8; c++) {
+            const bx = -250 + c * 72;
+            const by = -40 + r * 80;
+            const active = cycle(3, (r * 8 + c) * 0.6, t) > 0.2;
+            ctx.fillStyle = active ? '#c8503c' : '#26282c';
+            ctx.beginPath();
+            ctx.roundRect(bx, by, 58, 58, 8);
+            ctx.fill();
+            if (active) {
+              const ag = ctx.createRadialGradient(bx + 29, by + 29, 2, bx + 29, by + 29, 40);
+              ag.addColorStop(0, `rgba(${RIM},0.35)`);
+              ag.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx.fillStyle = ag;
+              ctx.fillRect(bx - 12, by - 12, 82, 82);
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawWaveform(t) {
+        const wy = H * 0.84;
+        ctx.strokeStyle = `rgba(${CREAM},0.75)`;
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let x = 260; x < W - 260; x += 8) {
+          const y = wy + cycle(2, x * 0.004, t) * 55 * (0.4 + 0.6 * (0.5 + 0.5 * cycle(1, x * 0.0012, t)));
+          if (x === 260) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(${CREAM},0.06)`;
+        ctx.fillRect(0, wy - 90, W, 180);
+        ctx.fillStyle = `rgba(${CREAM},0.14)`;
+        ctx.fillRect(0, wy - 2, W, 4);
+      }
+
+      // ============ LAYER 3B — DESK PROPS (glasses, notes, pen, clock) ============
+      function drawDeskProps(t) {
+        const deskY = H * 0.66;
+
+        ctx.save();
+        ctx.translate(W * 0.62, deskY + 340);
+        ctx.rotate(0.08);
+        ctx.fillStyle = 'rgba(20,16,13,0.9)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 110, 62, 0, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = '#5a4634';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.arc(0, 0, 92, 0, TAU);
+        ctx.stroke();
+        ctx.strokeStyle = '#6e5540';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(-92, 0);
+        ctx.lineTo(-140, 30);
+        ctx.moveTo(92, 0);
+        ctx.lineTo(140, 30);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(W * 0.30, deskY + 300);
+        ctx.rotate(-0.06);
+        ctx.fillStyle = 'rgba(240,235,220,0.95)';
+        ctx.fillRect(-130, -90, 260, 180);
+        ctx.strokeStyle = 'rgba(150,130,100,0.5)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-130, -90, 260, 180);
+        ctx.strokeStyle = 'rgba(140,120,95,0.35)';
+        ctx.lineWidth = 2;
+        for (let r = 0; r < 4; r++) {
+          ctx.beginPath();
+          ctx.moveTo(-115, -55 + r * 34);
+          ctx.lineTo(115, -55 + r * 34);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(W * 0.36, deskY + 460);
+        ctx.rotate(0.5);
+        ctx.fillStyle = '#3a2c1e';
+        ctx.fillRect(-10, -130, 20, 260);
+        ctx.fillStyle = '#e8e0d0';
+        ctx.beginPath();
+        ctx.moveTo(0, -130);
+        ctx.lineTo(10, -100);
+        ctx.lineTo(0, -70);
+        ctx.lineTo(-10, -100);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function drawWallClock(t) {
+        const cx = W * 0.10, cy = H * 0.16;
+        const seconds = (t * 12) % 60;
+        const minutes = (t * 0.2) % 60;
+
+        ctx.fillStyle = 'rgba(25,20,16,0.9)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 90, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,200,150,0.3)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 90, 0, TAU);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(240,225,200,0.85)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 80, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = '#4a3828';
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        const minAngle = (minutes / 60) * TAU - Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(minAngle) * 52, cy + Math.sin(minAngle) * 52);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#8a6a48';
+        ctx.lineWidth = 4;
+        const secAngle = (seconds / 60) * TAU - Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(secAngle) * 62, cy + Math.sin(secAngle) * 62);
+        ctx.stroke();
+
+        ctx.fillStyle = '#3a2c1e';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 7, 0, TAU);
+        ctx.fill();
+      }
+
+      // ============ LAYER 3C — EYEGLASSES + NEWSPAPER (silver generation props) ============
+      function drawEyeglasses(t) {
+        const gx = W * 0.70, gy = H * 0.55;
+        ctx.save();
+        ctx.translate(gx, gy);
+        ctx.rotate(0.1 + cycle(1, 0.5, t) * 0.02);
+
+        ctx.fillStyle = 'rgba(20,20,22,0.85)';
+        ctx.beginPath();
+        ctx.roundRect(-160, -90, 320, 180, 18);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,120,130,0.4)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        for (let e = -1; e <= 1; e += 2) {
+          const lensX = e * 55;
+          ctx.strokeStyle = '#3a3a42';
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.arc(lensX, -20, 44, 0, TAU);
+          ctx.stroke();
+          const sheen = 0.3 + 0.3 * cycle(2, 0.5 * (e + 1), t);
+          ctx.fillStyle = `rgba(160,200,240,${0.06 + sheen * 0.05})`;
+          ctx.beginPath();
+          ctx.arc(lensX - 10, -30, 30, 0, TAU);
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = '#3a3a42';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(-110, -20);
+        ctx.lineTo(-160, 20);
+        ctx.moveTo(110, -20);
+        ctx.lineTo(160, 20);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(230,225,210,0.35)';
+        ctx.fillRect(-20, 50, 40, 40);
+        ctx.restore();
+      }
+
+      function drawNewspaper(t) {
+        const nx = W * 0.16, ny = H * 0.74;
+        ctx.save();
+        ctx.translate(nx, ny);
+        ctx.rotate(-0.04);
+
+        ctx.fillStyle = '#e8e2d2';
+        ctx.beginPath();
+        ctx.roundRect(-150, -110, 300, 220, 4);
+        ctx.fill();
+        ctx.fillStyle = '#b8b0a0';
+        ctx.fillRect(-130, -90, 260, 4);
+        ctx.fillRect(-130, -70, 200, 3);
+        ctx.fillRect(-130, -58, 240, 3);
+        ctx.fillRect(-130, -46, 220, 3);
+        ctx.fillRect(-130, -34, 250, 3);
+        ctx.fillRect(-130, -22, 190, 3);
+        ctx.fillStyle = 'rgba(150,140,120,0.5)';
+        ctx.fillRect(40, -85, 90, 60);
+        ctx.fillRect(-130, 20, 260, 60);
+        ctx.restore();
+      }
+
+      // ============ LAYER 4 — MOTES + FILM ============
+      function drawMotes(t) {
+        for (let i = 0; i < motes.length; i++) {
+          const m = motes[i];
+          const mx = m.x + cycle(m.k, m.ph, t) * 80;
+          const my = m.y + cycle(m.k + 1, m.ph * 2, t) * 50;
+          const pulse = 0.4 + 0.6 * (0.5 + 0.5 * cycle(2, m.ph, t));
+          ctx.fillStyle = `rgba(${CREAM},${m.alpha * pulse})`;
+          ctx.beginPath();
+          ctx.arc(mx, my, m.size * pulse, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawBokeh(t) {
+        for (let i = 0; i < 22; i++) {
+          const size = 24 + hash(i, 50) * 90;
+          const k = 1 + (i % 3);
+          const bx = hash(i, 51) * W + cycle(k, hash(i, 52) * TAU, t) * 200;
+          const by = hash(i, 53) * H + cycle(k + 1, hash(i, 54) * TAU, t) * 140;
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, size);
+          g.addColorStop(0, `rgba(${AMBER},${0.08 + hash(i, 55) * 0.08})`);
+          g.addColorStop(0.7, `rgba(${AMBER},${0.02})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(bx, by, size, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.04})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.30, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.62)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawHalation(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 0.2, t);
+        const h = ctx.createRadialGradient(W * 0.5, H * 0.44, 30, W * 0.5, H * 0.44, 1200);
+        h.addColorStop(0, `rgba(${AMBER},${0.04 + pulse * 0.04})`);
+        h.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = h;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawRoom(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.35, cam.y * 0.35);
+        drawDesk(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.6, cam.y * 0.6);
+        drawMonitor(W * 0.285, H * 0.36, 640, 400, eqBarsL, t, false);
+        drawMonitor(W * 0.715, H * 0.36, 640, 400, eqBarsR, t, true);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawMic(t);
+        drawStreamDeck(t);
+        drawWaveform(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.85, cam.y * 0.85);
+        drawDeskProps(t);
+        drawEyeglasses(t);
+        drawNewspaper(t);
+        ctx.restore();
+
+        drawWallClock(t);
+
+        drawBokeh(t);
+        drawMotes(t);
+        drawHalation(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['silver-economy'] = tl;
+    </script>
+  </div>
+</template>

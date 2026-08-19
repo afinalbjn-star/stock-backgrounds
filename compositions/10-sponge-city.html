@@ -1,0 +1,505 @@
+<template id="sponge-city-template">
+  <div id="sponge-city-root" data-composition-id="sponge-city" data-width="3840" data-height="2160">
+    <canvas id="city-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #sponge-city-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #0a0e12;
+        overflow: hidden;
+      }
+      #city-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('city-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0x2C8A5F1);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 0.5, t) * 80,
+          y: H / 2 + cycle(2, 2.0, t) * 40,
+          s: 1 + cycle(1, 3.7, t) * 0.05,
+          r: cycle(1, 5.5, t) * 0.003
+        };
+      }
+
+      const STEEL = '140,165,190';
+      const WATER = '80,170,200';
+      const FOLIAGE = '90,180,110';
+      const CYAN2 = '120,230,220';
+
+      const block = 420;
+      const cols = Math.ceil(W / block);
+      const rows = Math.ceil(H / block);
+
+      const blocks = [];
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          const rnd = hash(c * 31 + r * 17, 7);
+          if (rnd > 0.82) continue;
+          blocks.push({
+            cx: c * block + block / 2,
+            cy: r * block + block / 2,
+            w: block * (0.55 + rnd * 0.35),
+            h: block * (0.45 + hash(c, r) * 0.4),
+            rot: (hash(c, r + 3) - 0.5) * 0.12,
+            tint: 0.04 + hash(c, r + 5) * 0.06,
+            ph: hash(c, r + 9) * TAU
+          });
+        }
+      }
+
+      const bioswales = [];
+      for (let i = 0; i < 9; i++) {
+        bioswales.push({
+          x: rand() * W,
+          y: rand() * H,
+          w: 130 + rand() * 140,
+          h: 240 + rand() * 220,
+          rot: (rand() - 0.5) * 0.25,
+          ph: rand() * TAU,
+          depth: 0.4 + rand() * 0.6
+        });
+      }
+
+      const trees = [];
+      for (let i = 0; i < 12; i++) {
+        trees.push({
+          x: rand() * W,
+          y: rand() * H,
+          r: 60 + rand() * 55,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          depth: 0.4 + rand() * 0.6
+        });
+      }
+
+      const cyclists = [];
+      for (let i = 0; i < 8; i++) {
+        cyclists.push({
+          x: rand() * W,
+          y: rand() * H,
+          dir: rand() > 0.5 ? 1 : -1,
+          speed: 60 + rand() * 80,
+          depth: 0.5 + rand() * 0.5
+        });
+      }
+
+      const rain = [];
+      for (let i = 0; i < 320; i++) {
+        rain.push({
+          x: rand() * W,
+          y: rand() * H,
+          len: 14 + rand() * 26,
+          speed: 16 + rand() * 22,
+          alpha: 0.10 + rand() * 0.2,
+          ph: rand() * TAU
+        });
+      }
+
+      // ============ LAYER 1 — CITY PLATE (top-down) ============
+      function drawPlate(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#101820');
+        bg.addColorStop(0.5, '#0b1218');
+        bg.addColorStop(1, '#070b0f');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.strokeStyle = 'rgba(130,160,185,0.13)';
+        ctx.lineWidth = 4;
+        for (let gx = 0; gx <= W; gx += block) {
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, H);
+          ctx.stroke();
+        }
+        for (let gy = 0; gy <= H; gy += block) {
+          ctx.beginPath();
+          ctx.moveTo(0, gy);
+          ctx.lineTo(W, gy);
+          ctx.stroke();
+        }
+
+        for (let b = 0; b < blocks.length; b++) {
+          const blk = blocks[b];
+          const pulse = 0.5 + 0.5 * cycle(1, blk.ph, t);
+          ctx.save();
+          ctx.translate(blk.cx, blk.cy);
+          ctx.rotate(blk.rot);
+          ctx.fillStyle = `rgba(${STEEL},${blk.tint + pulse * 0.03})`;
+          ctx.fillRect(-blk.w / 2, -blk.h / 2, blk.w, blk.h);
+          ctx.strokeStyle = 'rgba(200,220,240,0.10)';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(-blk.w / 2, -blk.h / 2, blk.w, blk.h);
+          ctx.fillStyle = 'rgba(230,245,255,0.05)';
+          ctx.fillRect(-blk.w / 2 + 14, -blk.h / 2 + 14, blk.w - 28, 20);
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 2 — BIOSWALES + TREES (water rises with rain) ============
+      function drawBioswales(t) {
+        const rainCycle = 0.5 + 0.5 * cycle(1, 2.8, t);
+        const waterLevel = Math.pow(Math.sin(Math.PI * rainCycle), 1.6);
+
+        for (let i = 0; i < bioswales.length; i++) {
+          const sw = bioswales[i];
+          ctx.save();
+          ctx.translate(sw.x, sw.y);
+          ctx.rotate(sw.rot);
+          ctx.scale(sw.depth, sw.depth);
+
+          ctx.fillStyle = 'rgba(38,50,42,0.9)';
+          ctx.beginPath();
+          ctx.roundRect(-sw.w / 2, -sw.h / 2, sw.w, sw.h, 18);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(110,160,120,0.4)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.roundRect(-sw.w / 2, -sw.h / 2, sw.w, sw.h, 18);
+          ctx.stroke();
+
+          const waterH = sw.h * (0.12 + waterLevel * 0.72);
+          const wg = ctx.createLinearGradient(0, sw.h / 2 - waterH, 0, sw.h / 2);
+          wg.addColorStop(0, `rgba(${WATER},${0.55 + waterLevel * 0.3})`);
+          wg.addColorStop(1, `rgba(${WATER},0.85)`);
+          ctx.fillStyle = wg;
+          ctx.fillRect(-sw.w / 2 + 8, sw.h / 2 - waterH, sw.w - 16, waterH);
+
+          const ripplePulse = 0.5 + 0.5 * cycle(2, sw.ph, t);
+          ctx.strokeStyle = `rgba(${CYAN2},${0.3 + ripplePulse * 0.3})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.ellipse(0, sw.h / 2 - waterH * 0.45, sw.w * 0.2 + ripplePulse * 12, 9 + ripplePulse * 6, 0, 0, TAU);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(${CYAN2},${0.15 + ripplePulse * 0.15})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.ellipse(0, sw.h / 2 - waterH * 0.45, sw.w * 0.34 + ripplePulse * 16, 16 + ripplePulse * 8, 0, 0, TAU);
+          ctx.stroke();
+
+          ctx.fillStyle = `rgba(200,240,220,${0.5 + waterLevel * 0.4})`;
+          ctx.beginPath();
+          ctx.arc(sw.w * 0.3, sw.h / 2 - waterH + 8, 4, 0, TAU);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      function drawTrees(t) {
+        for (let i = 0; i < trees.length; i++) {
+          const tr = trees[i];
+          const sway = cycle(tr.k, tr.ph, t) * 8 * tr.depth;
+          ctx.save();
+          ctx.translate(tr.x + sway, tr.y);
+          ctx.scale(tr.depth, tr.depth);
+
+          ctx.fillStyle = 'rgba(30,45,38,0.8)';
+          ctx.beginPath();
+          ctx.arc(0, 0, tr.r * 0.22, 0, TAU);
+          ctx.fill();
+
+          const canopy = ctx.createRadialGradient(-tr.r * 0.25, -tr.r * 0.25, 10, 0, 0, tr.r);
+          canopy.addColorStop(0, `rgba(${FOLIAGE},${0.45 + 0.2 * (0.5 + 0.5 * cycle(1, tr.ph, t))})`);
+          canopy.addColorStop(1, `rgba(40,90,60,${0.5})`);
+          ctx.fillStyle = canopy;
+          ctx.beginPath();
+          ctx.arc(0, 0, tr.r, 0, TAU);
+          ctx.fill();
+
+          ctx.fillStyle = `rgba(${FOLIAGE},0.30)`;
+          ctx.beginPath();
+          ctx.arc(-tr.r * 0.2, -tr.r * 0.3, tr.r * 0.55, 0, TAU);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 3 — CYCLISTS ============
+      function drawCyclists(t) {
+        for (let i = 0; i < cyclists.length; i++) {
+          const c = cyclists[i];
+          const cx = (c.x + c.dir * c.speed * ((t * 1.2) % 1)) % W;
+          const cy = c.y;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(c.depth, c.depth);
+          ctx.rotate(c.dir > 0 ? 0 : Math.PI);
+
+          ctx.fillStyle = 'rgba(210,130,60,0.9)';
+          ctx.fillRect(-14, -20, 26, 42);
+          ctx.fillStyle = 'rgba(40,40,46,0.9)';
+          ctx.beginPath();
+          ctx.arc(0, 22, 11, 0, TAU);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(0, -26, 11, 0, TAU);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(160,100,50,0.8)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(-6, -10);
+          ctx.lineTo(-14, 10);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 4 — RAIN + SPLASH ============
+      function drawRain(t) {
+        const rainIntensity = 0.3 + 0.7 * Math.pow(0.5 + 0.5 * cycle(1, 2.8, t), 1.4);
+        ctx.strokeStyle = `rgba(190,215,235,${0.5 * rainIntensity})`;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        for (let i = 0; i < rain.length; i++) {
+          const r = rain[i];
+          const ry = (r.y + t * r.speed * rainIntensity) % (H + 60) - 30;
+          const rx = r.x - ((t * r.speed * 0.35 * rainIntensity) % W);
+          ctx.globalAlpha = r.alpha * rainIntensity;
+          ctx.beginPath();
+          ctx.moveTo(rx, ry);
+          ctx.lineTo(rx - 7, ry + r.len);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function drawSplash(t) {
+        const splashPulse = 0.5 + 0.5 * cycle(3, 1.0, t);
+        for (let i = 0; i < 40; i++) {
+          const sx = hash(i, 90) * W;
+          const sy = hash(i, 91) * H;
+          const expand = ((t * 0.5 + hash(i, 92)) % 1);
+          const radius = expand * 60 * (0.4 + 0.6 * splashPulse);
+          ctx.strokeStyle = `rgba(${CYAN2},${0.16 * (1 - expand)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.ellipse(sx, sy, radius, radius * 0.3, 0, 0, TAU);
+          ctx.stroke();
+        }
+      }
+
+      // ============ LAYER 2B — STORM DRAINS (water swirl vortex) ============
+      const drains = [];
+      for (let i = 0; i < 6; i++) {
+        drains.push({
+          x: rand() * W,
+          y: rand() * H,
+          r: 26 + rand() * 30,
+          ph: rand() * TAU,
+          depth: 0.5 + rand() * 0.5
+        });
+      }
+
+      function drawDrains(t) {
+        const rainCycle = 0.5 + 0.5 * cycle(1, 2.8, t);
+        const waterLevel = Math.pow(Math.sin(Math.PI * rainCycle), 1.6);
+
+        for (let i = 0; i < drains.length; i++) {
+          const d = drains[i];
+          ctx.save();
+          ctx.translate(d.x, d.y);
+          ctx.scale(d.depth, d.depth);
+
+          ctx.fillStyle = 'rgba(18,24,30,0.95)';
+          ctx.beginPath();
+          ctx.arc(0, 0, d.r, 0, TAU);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(120,150,170,0.3)';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+
+          for (let bar = -1; bar <= 1; bar++) {
+            ctx.fillStyle = 'rgba(60,80,95,0.6)';
+            ctx.fillRect(-d.r * 0.9, bar * d.r * 0.45 - 3, d.r * 1.8, 6);
+          }
+
+          const swirl = 0.15 + waterLevel * 0.75;
+          if (swirl > 0.2) {
+            const swirlGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, d.r * 0.8);
+            swirlGrad.addColorStop(0, `rgba(${WATER},${0.55 * swirl})`);
+            swirlGrad.addColorStop(0.6, `rgba(${WATER},${0.25 * swirl})`);
+            swirlGrad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = swirlGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, d.r * 0.8, 0, TAU);
+            ctx.fill();
+
+            const spin = t * 3 * swirl;
+            ctx.strokeStyle = `rgba(${CYAN2},${0.35 * swirl})`;
+            ctx.lineWidth = 3;
+            for (let arm = 0; arm < 3; arm++) {
+              const a0 = spin + arm * TAU / 3;
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              ctx.lineTo(Math.cos(a0) * d.r * 0.7, Math.sin(a0) * d.r * 0.7);
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 2C — BUILDING SHADOWS (extrusion illusion) ============
+      function drawExtrusions(t) {
+        const light = 0.5 + 0.5 * cycle(1, 3.9, t);
+        for (let b = 0; b < blocks.length; b++) {
+          const blk = blocks[b];
+          const h = blk.h * 0.55 * light;
+          ctx.save();
+          ctx.translate(blk.cx, blk.cy);
+          ctx.rotate(blk.rot);
+          ctx.fillStyle = `rgba(20,30,40,${0.20 + light * 0.15})`;
+          ctx.beginPath();
+          ctx.moveTo(-blk.w / 2, -blk.h / 2);
+          ctx.lineTo(-blk.w / 2, -blk.h / 2 - h);
+          ctx.lineTo(blk.w / 2, -blk.h / 2 - h);
+          ctx.lineTo(blk.w / 2, -blk.h / 2);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // ============ LAYER 4B — THERMAL OVERLAY (heat island gradient) ============
+      function drawThermal(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 1.6, t);
+        const g = ctx.createRadialGradient(W * 0.35, H * 0.4, 200, W * 0.35, H * 0.4, 1800);
+        g.addColorStop(0, `rgba(255,120,60,${0.03 + pulse * 0.03})`);
+        g.addColorStop(0.5, `rgba(255,180,80,${0.02})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+
+        const g2 = ctx.createRadialGradient(W * 0.7, H * 0.6, 200, W * 0.7, H * 0.6, 1500);
+        g2.addColorStop(0, `rgba(80,200,170,${0.025 + pulse * 0.02})`);
+        g2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g2;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // ============ LAYER 5 — ATMOSPHERE + FILM ============
+      function drawAtmosphere(t) {
+        const godRay = 0.5 + 0.5 * cycle(1, 0.7, t);
+        const gr = ctx.createRadialGradient(W / 2, H * 0.1, 100, W / 2, H * 0.1, 2400);
+        gr.addColorStop(0, `rgba(240,230,200,${0.05 + godRay * 0.04})`);
+        gr.addColorStop(0.4, `rgba(240,230,200,${0.02})`);
+        gr.addColorStop(1, 'rgba(240,230,200,0)');
+        ctx.fillStyle = gr;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = `rgba(${CYAN2},${0.02 + 0.03 * godRay})`;
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.038})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.60)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawPlate(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.4, cam.y * 0.4);
+        ctx.rotate(cam.r * 0.4);
+        drawBioswales(t);
+        drawDrains(t);
+        drawTrees(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.6, cam.y * 0.6);
+        drawExtrusions(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x * 0.75, cam.y * 0.75);
+        ctx.rotate(cam.r * 0.7);
+        drawCyclists(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawRain(t);
+        drawSplash(t);
+        ctx.restore();
+
+        drawAtmosphere(t);
+        drawThermal(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['sponge-city'] = tl;
+    </script>
+  </div>
+</template>

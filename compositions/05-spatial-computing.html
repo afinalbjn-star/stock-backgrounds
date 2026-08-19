@@ -1,0 +1,513 @@
+<template id="spatial-computing-template">
+  <div id="spatial-computing-root" data-composition-id="spatial-computing" data-width="3840" data-height="2160">
+    <canvas id="sc-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #spatial-computing-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #07090d;
+        overflow: hidden;
+      }
+      #sc-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('sc-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0xA7C3E91);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 1.4, t) * 54,
+          y: H / 2 + cycle(2, 3.1, t) * 28,
+          s: 1 + cycle(1, 0.8, t) * 0.02,
+          r: cycle(1, 2.3, t) * 0.006
+        };
+      }
+
+      const CYAN = '120,220,255';
+      const VIOLET = '170,120,255';
+      const TEAL = '90,255,200';
+
+      const panels = [];
+      const panelSpecs = [
+        { depth: 0.2, hue: CYAN, w: 460, h: 340, offX: 0.26, offY: 0.30, ph: 0.4 },
+        { depth: 0.45, hue: TEAL, w: 620, h: 420, offX: 0.56, offY: 0.24, ph: 2.0 },
+        { depth: 0.7, hue: VIOLET, w: 700, h: 300, offX: 0.40, offY: 0.62, ph: 3.6 },
+        { depth: 0.9, hue: CYAN, w: 420, h: 260, offX: 0.72, offY: 0.70, ph: 5.2 },
+        { depth: 1.15, hue: TEAL, w: 360, h: 220, offX: 0.15, offY: 0.66, ph: 1.1 }
+      ];
+      for (let i = 0; i < panelSpecs.length; i++) {
+        const s = panelSpecs[i];
+        const widgets = [];
+        for (let wg = 0; wg < 9; wg++) {
+          widgets.push({
+            x: rand() * (s.w - 120) + 40,
+            y: rand() * (s.h - 120) + 56,
+            w: 50 + rand() * 90,
+            h: 26 + rand() * 40,
+            ph: rand() * TAU,
+            k: 1 + Math.floor(rand() * 3)
+          });
+        }
+        panels.push({
+          depth: s.depth,
+          hue: s.hue,
+          w: s.w,
+          h: s.h,
+          offX: s.offX,
+          offY: s.offY,
+          ph: s.ph,
+          widgets: widgets
+        });
+      }
+
+      const sparkles = [];
+      for (let i = 0; i < 150; i++) {
+        sparkles.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 1.5 + rand() * 3.5,
+          hue: rand() > 0.6 ? VIOLET : CYAN
+        });
+      }
+
+      const reticleRings = [];
+      for (let i = 0; i < 4; i++) {
+        reticleRings.push({
+          x: 0.3 + rand() * 0.4,
+          y: 0.3 + rand() * 0.4,
+          ph: rand() * TAU,
+          r: 40 + rand() * 60
+        });
+      }
+
+      // ============ LAYER 1 — PASSTHROUGH WORLD (blurred room) ============
+      function drawPassthrough(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#0d1218');
+        bg.addColorStop(0.5, '#0a0e13');
+        bg.addColorStop(1, '#05070a');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const deskY = H * 0.8;
+        ctx.fillStyle = '#12161c';
+        ctx.fillRect(0, deskY, W, H - deskY);
+        ctx.strokeStyle = 'rgba(140,180,220,0.10)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, deskY);
+        ctx.lineTo(W, deskY);
+        ctx.stroke();
+
+        const windowGlow = ctx.createRadialGradient(W * 0.82, H * 0.2, 80, W * 0.82, H * 0.2, 1100);
+        windowGlow.addColorStop(0, 'rgba(200,220,255,0.10)');
+        windowGlow.addColorStop(1, 'rgba(200,220,255,0)');
+        ctx.fillStyle = windowGlow;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.fillStyle = 'rgba(150,170,200,0.08)';
+        ctx.beginPath();
+        ctx.roundRect(W * 0.70, H * 0.14, W * 0.24, H * 0.18, 16);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(150,170,200,0.14)';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(140,180,220,0.07)';
+        ctx.lineWidth = 2;
+        for (let gx = 0; gx < W; gx += 320) {
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, H);
+          ctx.stroke();
+        }
+        for (let gy = 0; gy < H; gy += 320) {
+          ctx.beginPath();
+          ctx.moveTo(0, gy);
+          ctx.lineTo(W, gy);
+          ctx.stroke();
+        }
+      }
+
+      // ============ LAYER 2 — SPATIAL PANELS (parallax by depth) ============
+      function drawPanel(panel, t) {
+        const p = panel;
+        const px = p.offX * W;
+        const py = p.offY * H;
+        const breathe = 1 + cycle(1, p.ph, t) * 0.03;
+        const driftY = cycle(2, p.ph, t) * 30 * p.depth;
+        const driftX = cycle(1, p.ph * 1.7, t) * 40 * p.depth;
+
+        ctx.save();
+        ctx.translate(px + driftX, py + driftY);
+        ctx.scale(breathe, breathe);
+
+        const glowR = Math.max(p.w, p.h) * 0.8;
+        const g = ctx.createRadialGradient(0, 0, 20, 0, 0, glowR);
+        g.addColorStop(0, `rgba(${p.hue},${0.10 + p.depth * 0.05})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(-glowR, -glowR, glowR * 2, glowR * 2);
+
+        ctx.fillStyle = `rgba(${p.hue},${0.05 + p.depth * 0.04})`;
+        ctx.beginPath();
+        ctx.roundRect(-p.w / 2, -p.h / 2, p.w, p.h, 22);
+        ctx.fill();
+
+        ctx.strokeStyle = `rgba(${p.hue},${0.4 + p.depth * 0.35})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-p.w / 2, -p.h / 2, p.w, p.h, 22);
+        ctx.stroke();
+
+        ctx.strokeStyle = `rgba(${p.hue},${0.14 + p.depth * 0.12})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(-p.w / 2 + 20, -p.h / 2 + 20, p.w - 40, p.h - 40, 14);
+        ctx.stroke();
+
+        const barW = p.w * 0.55;
+        ctx.fillStyle = `rgba(${p.hue},${0.12 + p.depth * 0.10})`;
+        ctx.fillRect(-p.w / 2 + 24, -p.h / 2 + 20, barW, 14);
+        ctx.fillStyle = `rgba(${p.hue},${0.4 + p.depth * 0.3})`;
+        ctx.fillRect(-p.w / 2 + 24, -p.h / 2 + 20, barW * (0.35 + 0.3 * (0.5 + 0.5 * cycle(2, p.ph, t))), 14);
+
+        for (let i = 0; i < p.widgets.length; i++) {
+          const wgt = p.widgets[i];
+          const pulse = 0.5 + 0.5 * cycle(wgt.k, wgt.ph, t);
+          const wx = -p.w / 2 + wgt.x;
+          const wy = -p.h / 2 + wgt.y;
+          ctx.fillStyle = `rgba(${p.hue},${0.06 + pulse * 0.09})`;
+          ctx.beginPath();
+          ctx.roundRect(wx, wy, wgt.w, wgt.h, 8);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(${p.hue},${0.14 + pulse * 0.2})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(wx, wy, wgt.w, wgt.h, 8);
+          ctx.stroke();
+
+          const barW2 = wgt.w * 0.7;
+          ctx.fillStyle = `rgba(${p.hue},${0.3 + pulse * 0.4})`;
+          ctx.fillRect(wx + 10, wy + wgt.h - 18, barW2 * pulse, 6);
+        }
+
+        const corner = 30;
+        ctx.strokeStyle = `rgba(${p.hue},${0.5 + p.depth * 0.4})`;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(-p.w / 2 + 30, -p.h / 2);
+        ctx.lineTo(-p.w / 2 + 30, -p.h / 2 + corner);
+        ctx.moveTo(-p.w / 2, -p.h / 2 + 30);
+        ctx.lineTo(-p.w / 2 + corner, -p.h / 2 + 30);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // ============ LAYER 3 — GESTURE RETICLE ============
+      function drawReticles(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < reticleRings.length; i++) {
+          const rr = reticleRings[i];
+          const rx = rr.x * W + cycle(1, rr.ph, t) * 90;
+          const ry = rr.y * H + cycle(2, rr.ph * 2, t) * 60;
+          const expand = 0.5 + 0.5 * cycle(1, rr.ph, t);
+          ctx.strokeStyle = `rgba(${CYAN},${0.25 + expand * 0.3})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(rx, ry, rr.r * (0.7 + expand * 0.6), 0, TAU);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(${CYAN},${0.1 + expand * 0.15})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(rx, ry, rr.r * (1 + expand * 0.8), 0, TAU);
+          ctx.stroke();
+
+          ctx.fillStyle = `rgba(${CYAN},${0.5 + expand * 0.5})`;
+          ctx.fillRect(rx - 3, ry - 18, 6, 36);
+          ctx.fillRect(rx - 18, ry - 3, 36, 6);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 3B — DATA LINKS (beams between panels) ============
+      function drawDataLinks(t) {
+        const linkPairs = [
+          [0, 1], [1, 2], [2, 3], [1, 4], [2, 4]
+        ];
+        ctx.globalCompositeOperation = 'lighter';
+        for (let l = 0; l < linkPairs.length; l++) {
+          const a = panels[linkPairs[l][0]];
+          const b = panels[linkPairs[l][1]];
+          const ax = a.offX * W, ay = a.offY * H;
+          const bx = b.offX * W, by = b.offY * H;
+          const pulse = 0.3 + 0.7 * (0.5 + 0.5 * cycle(2, l * 0.8, t));
+
+          const grad = ctx.createLinearGradient(ax, ay, bx, by);
+          grad.addColorStop(0, `rgba(${a.hue},${0.06 * pulse})`);
+          grad.addColorStop(1, `rgba(${b.hue},${0.06 * pulse})`);
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([24, 36]);
+          ctx.lineDashOffset = -t * 60;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.quadraticCurveTo((ax + bx) / 2, Math.min(ay, by) - 120, bx, by);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const flow = (t * 0.4 + l * 0.2) % 1;
+          const fx = ax + (bx - ax) * flow;
+          const fy = ay + (by - ay) * flow - Math.sin(flow * Math.PI) * 120;
+          ctx.fillStyle = `rgba(${a.hue},${0.5 + pulse * 0.4})`;
+          ctx.beginPath();
+          ctx.arc(fx, fy, 5, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 3C — FOCUS RETICLE (macro focus assist) ============
+      function drawFocusAssist(t) {
+        const fx = W * 0.42, fy = H * 0.52;
+        const pulse = 0.5 + 0.5 * cycle(2, 1.1, t);
+
+        ctx.strokeStyle = `rgba(${CYAN},${0.22 + pulse * 0.18})`;
+        ctx.lineWidth = 3;
+        for (let c = 0; c < 4; c++) {
+          const cx = fx + Math.cos(c * Math.PI / 2 + 0.785) * 130;
+          const cy = fy + Math.sin(c * Math.PI / 2 + 0.785) * 130;
+          ctx.beginPath();
+          ctx.moveTo(cx - 16, cy);
+          ctx.lineTo(cx + 16, cy);
+          ctx.moveTo(cx, cy - 16);
+          ctx.lineTo(cx, cy + 16);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = `rgba(${CYAN},${0.12 + pulse * 0.10})`;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 130, 0, TAU);
+        ctx.stroke();
+
+        const hashBar = 40 + pulse * 20;
+        ctx.fillStyle = `rgba(${CYAN},${0.35 + pulse * 0.3})`;
+        for (let i = 0; i < 4; i++) {
+          ctx.fillRect(fx - 70, fy - hashBar + i * 12, 10, 6);
+        }
+      }
+
+      // ============ LAYER 3D — HAND GESTURE RAY (finger-pinch beam) ============
+      function drawGestureRay(t) {
+        const gx = W * 0.46, gy = H * 0.52;
+        const breathe = 0.5 + 0.5 * cycle(2, 2.2, t);
+        const rayLen = 320 + breathe * 160;
+        const targetX = gx + Math.cos(-0.3) * rayLen;
+        const targetY = gy + Math.sin(-0.3) * rayLen;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+
+        const ray = ctx.createLinearGradient(gx, gy, targetX, targetY);
+        ray.addColorStop(0, `rgba(${CYAN},${0.05 + breathe * 0.12})`);
+        ray.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.strokeStyle = ray;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([10, 14]);
+        ctx.lineDashOffset = -t * 80;
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.lineTo(targetX, targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const wave = ctx.createRadialGradient(gx, gy, 0, gx, gy, 90);
+        wave.addColorStop(0, `rgba(${CYAN},${0.10 + breathe * 0.08})`);
+        wave.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = wave;
+        ctx.beginPath();
+        ctx.arc(gx, gy, 90, 0, TAU);
+        ctx.fill();
+
+        ctx.strokeStyle = `rgba(${CYAN},${0.35 + breathe * 0.2})`;
+        ctx.lineWidth = 3;
+        for (let r = 0; r < 3; r++) {
+          const rr = 40 + r * 30 + breathe * 12;
+          ctx.beginPath();
+          ctx.arc(gx, gy, rr, -0.6, -0.6 + breathe * 1.2);
+          ctx.stroke();
+        }
+
+        const tip = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, 26);
+        tip.addColorStop(0, `rgba(${CYAN},${0.5 * breathe})`);
+        tip.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = tip;
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 26, 0, TAU);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      // ============ LAYER 3E — HOLOGRAPHIC KEYBOARD (floating keys) ============
+      function drawHoloKeyboard(t) {
+        const kx = W * 0.5, ky = H * 0.72;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.translate(kx, ky);
+        ctx.rotate(cycle(1, 0.3, t) * 0.008);
+
+        const glow = ctx.createRadialGradient(0, 0, 10, 0, 0, 480);
+        glow.addColorStop(0, `rgba(${CYAN},${0.07 + 0.05 * cycle(1, 1.2, t)})`);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(-480, -480, 960, 960);
+
+        for (let r = 0; r < 3; r++) {
+          for (let k = 0; k < 12; k++) {
+            const bob = cycle(2, k * 0.35 + r * 0.5, t) * 5;
+            const kx2 = -330 + k * 60;
+            const ky2 = -70 + r * 52 + bob;
+            ctx.strokeStyle = `rgba(${CYAN},${0.14 + 0.10 * (0.5 + 0.5 * cycle(2, k, t))})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(kx2, ky2, 46, 34, 6);
+            ctx.stroke();
+            ctx.fillStyle = `rgba(${CYAN},${0.05 + 0.04 * (0.5 + 0.5 * cycle(2, k + r, t))})`;
+            ctx.fillRect(kx2, ky2, 46, 34);
+          }
+        }
+        ctx.restore();
+      }
+
+      // ============ LAYER 4 — SPARKLES + FILM ============
+      function drawSparkles(t) {
+        for (let i = 0; i < sparkles.length; i++) {
+          const sp = sparkles[i];
+          const sx = sp.x + cycle(sp.k, sp.ph, t) * 120;
+          const sy = sp.y + cycle(sp.k + 1, sp.ph * 2, t) * 80;
+          const pulse = 0.3 + 0.7 * (0.5 + 0.5 * cycle(3, sp.ph, t));
+          ctx.fillStyle = `rgba(${sp.hue},${0.10 + pulse * 0.25})`;
+          ctx.beginPath();
+          ctx.arc(sx, sy, sp.size * pulse, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.038})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.30, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.64)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFOV(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 2.9, t);
+        const f = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 1.05);
+        f.addColorStop(0, 'rgba(0,0,0,0)');
+        f.addColorStop(1, `rgba(0,0,0,${0.28 + pulse * 0.10})`);
+        ctx.fillStyle = f;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawPassthrough(t);
+        const cam = camera(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.3, cam.y * 0.3);
+        drawSparkles(t);
+        ctx.restore();
+
+        const sorted = panels.slice().sort((a, b) => a.depth - b.depth);
+        for (let i = 0; i < sorted.length; i++) {
+          const p = sorted[i];
+          ctx.save();
+          ctx.translate(cam.x * p.depth * 0.5, cam.y * p.depth * 0.5);
+          ctx.rotate(cam.r * p.depth);
+          drawPanel(p, t);
+          ctx.restore();
+        }
+
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+        drawDataLinks(t);
+        drawReticles(t);
+        drawFocusAssist(t);
+        drawGestureRay(t);
+        drawHoloKeyboard(t);
+        ctx.restore();
+
+        drawFOV(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['spatial-computing'] = tl;
+    </script>
+  </div>
+</template>

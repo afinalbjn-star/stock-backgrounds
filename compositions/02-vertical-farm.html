@@ -1,0 +1,521 @@
+<template id="vertical-farm-template">
+  <div data-hf-id="hf-62gr" id="vertical-farm-root" data-composition-id="vertical-farm" data-width="3840" data-height="2160">
+    <canvas data-hf-id="hf-k1t1" id="vf-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #vertical-farm-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #02100a;
+        overflow: hidden;
+      }
+      #vf-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('vf-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ t >>> 15, t | 1);
+          t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      const rand = mulberry32(0xFA2B71);
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(k, phi, t) {
+        return Math.sin(TAU * k * t / T + phi);
+      }
+
+      // ============ VIRTUAL CAMERA RIG (loop-safe: k = 1..2 integer) ============
+      function camera(t) {
+        return {
+          x: W / 2 + cycle(1, 0.6, t) * 90,
+          y: H / 2 + cycle(2, 1.9, t) * 34,
+          s: 1 + cycle(1, 3.4, t) * 0.045,
+          r: cycle(1, 5.1, t) * 0.0045,
+          drift: cycle(2, 0.3, t) * 26
+        };
+      }
+
+      // ============ WORLD DATA (static, seeded) ============
+      const towers = [];
+      for (let tIdx = 0; tIdx < 6; tIdx++) {
+        const trays = [];
+        for (let tr = 0; tr < 5; tr++) {
+          const plants = [];
+          for (let p = 0; p < 7; p++) {
+            plants.push({
+              x: -320 + p * 105 + (rand() - 0.5) * 26,
+              h: 95 + rand() * 110,
+              ph: rand() * TAU,
+              sway: 0.5 + rand() * 0.6,
+              lean: (rand() - 0.5) * 0.35,
+              leaves: 4 + Math.floor(rand() * 3)
+            });
+          }
+          trays.push({ y: 240 + tr * 330, plants: plants });
+        }
+        towers.push({ x: 300 + tIdx * 640, trays: trays });
+      }
+
+      const mistPuffs = [];
+      for (let i = 0; i < 70; i++) {
+        mistPuffs.push({
+          x: rand() * W,
+          y: rand() * H,
+          r: 60 + rand() * 170,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          alpha: 0.04 + rand() * 0.09
+        });
+      }
+
+      const drops = [];
+      for (let i = 0; i < 42; i++) {
+        drops.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          size: 3 + rand() * 6
+        });
+      }
+
+      const ledHues = [];
+      for (let i = 0; i < towers.length; i++) ledHues.push(rand() * TAU);
+
+      // ============ LAYER 1 — BACKGROUND ============
+      function drawBg(t) {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#032112');
+        bg.addColorStop(0.5, '#021610');
+        bg.addColorStop(1, '#010a07');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.strokeStyle = 'rgba(90,255,170,0.05)';
+        ctx.lineWidth = 3;
+        for (let gx = 0; gx < W; gx += 320) {
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, H);
+          ctx.stroke();
+        }
+        for (let gy = 0; gy < H; gy += 320) {
+          ctx.beginPath();
+          ctx.moveTo(0, gy);
+          ctx.lineTo(W, gy);
+          ctx.stroke();
+        }
+
+        for (let m = 0; m < mistPuffs.length; m++) {
+          const p = mistPuffs[m];
+          const mx = p.x + cycle(p.k, p.ph, t) * 130;
+          const my = p.y + cycle(p.k + 1, p.ph * 2, t) * 60;
+          const g = ctx.createRadialGradient(mx, my, 0, mx, my, p.r);
+          g.addColorStop(0, `rgba(140,255,200,${p.alpha * 0.5})`);
+          g.addColorStop(1, 'rgba(140,255,200,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(mx - p.r, my - p.r, p.r * 2, p.r * 2);
+        }
+      }
+
+      // ============ LAYER 2 — TOWERS (mid, sharp) ============
+      function drawTower(tIdx, t, depthScale) {
+        const tower = towers[tIdx];
+        const ph = ledHues[tIdx];
+        const cycleT = ((t / T) * 5 + tIdx * 0.2) % 1;
+        const hue = 90 + cycleT * 110;
+        const ledPulse = 0.5 + 0.5 * cycle(2, ph, t);
+
+        ctx.save();
+        ctx.translate(tower.x, 0);
+        ctx.scale(depthScale, depthScale);
+
+        for (let tr = 0; tr < tower.trays.length; tr++) {
+          const tray = tower.trays[tr];
+          const ty = tray.y;
+
+          ctx.fillStyle = 'rgba(20,48,36,0.92)';
+          ctx.beginPath();
+          ctx.roundRect(-330, ty - 16, 660, 34, 10);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(70,140,100,0.45)';
+          ctx.fillRect(-322, ty - 9, 644, 7);
+
+          for (let p = 0; p < tray.plants.length; p++) {
+            const plant = tray.plants[p];
+            const px = plant.x;
+            const py = ty - 16;
+            const swayX = cycle(1, plant.ph, t) * 18 * plant.sway;
+            const grow = 0.88 + cycle(2, plant.ph, t) * 0.12;
+
+            ctx.strokeStyle = 'rgba(90,220,140,0.8)';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.quadraticCurveTo(
+              px + swayX * 0.4,
+              py - plant.h * 0.5 * grow,
+              px + swayX,
+              py - plant.h * grow
+            );
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(110,235,160,0.5)';
+            for (let lf = 0; lf < plant.leaves; lf++) {
+              const fr = (lf + 1) / (plant.leaves + 1);
+              const lx = px + swayX * fr;
+              const ly = py - plant.h * grow * fr;
+              const lrot = plant.lean + (lf % 2 === 0 ? 0.5 : -0.5);
+              ctx.save();
+              ctx.translate(lx, ly);
+              ctx.rotate(lrot + swayX * 0.002);
+              ctx.beginPath();
+              ctx.ellipse(28, 0, 26, 8, 0, 0, TAU);
+              ctx.fill();
+              ctx.restore();
+            }
+
+            const tipGlow = 0.5 + 0.5 * cycle(3, plant.ph, t);
+            const tg = ctx.createRadialGradient(px + swayX, py - plant.h * grow, 0, px + swayX, py - plant.h * grow, 34);
+            tg.addColorStop(0, `rgba(120,255,170,${0.12 * tipGlow})`);
+            tg.addColorStop(1, 'rgba(120,255,170,0)');
+            ctx.fillStyle = tg;
+            ctx.fillRect(px + swayX - 34, py - plant.h * grow - 34, 68, 68);
+          }
+        }
+
+        const ledW = 640;
+        const ledY = 190;
+        ctx.fillStyle = `hsla(${hue}, 85%, 55%, ${0.10 + ledPulse * 0.07})`;
+        ctx.fillRect(-320, ledY, ledW, H - 380);
+        ctx.fillStyle = `hsla(${hue}, 95%, 68%, ${0.4 + ledPulse * 0.35})`;
+        ctx.fillRect(-8, ledY, 16, H - 380);
+
+        const rail = ctx.createLinearGradient(-330, 0, 330, 0);
+        rail.addColorStop(0, 'rgba(30,55,45,0.9)');
+        rail.addColorStop(0.5, 'rgba(45,80,62,0.95)');
+        rail.addColorStop(1, 'rgba(30,55,45,0.9)');
+        ctx.fillStyle = rail;
+        ctx.fillRect(-316, 150, 632, 40);
+        ctx.restore();
+      }
+
+      // ============ LAYER 3 — WATER DROPLETS + MIST (foreground DOF) ============
+      function drawForeground(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let d = 0; d < drops.length; d++) {
+          const dr = drops[d];
+          const dx = dr.x + cycle(dr.k, dr.ph, t) * 200;
+          const dy = dr.y + cycle(dr.k + 1, dr.ph * 2, t) * 140;
+          const size = dr.size * (0.8 + 0.2 * cycle(2, dr.ph, t));
+          const g = ctx.createRadialGradient(dx, dy, 0, dx, dy, size * 4);
+          g.addColorStop(0, 'rgba(200,255,230,0.20)');
+          g.addColorStop(0.4, 'rgba(170,240,210,0.08)');
+          g.addColorStop(1, 'rgba(170,240,210,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(dx, dy, size * 4, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(230,255,245,0.5)';
+          ctx.beginPath();
+          ctx.arc(dx, dy, size, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 3B — CONVECTION MIST (soft volumetric drifts) ============
+      const driftMist = [];
+      for (let i = 0; i < 30; i++) {
+        driftMist.push({
+          x: rand() * W,
+          y: rand() * H,
+          r: 160 + rand() * 260,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          alpha: 0.03 + rand() * 0.06
+        });
+      }
+
+      function drawDriftMist(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let m = 0; m < driftMist.length; m++) {
+          const d = driftMist[m];
+          const mx = d.x + cycle(d.k, d.ph, t) * 220;
+          const my = d.y + cycle(d.k + 1, d.ph * 2, t) * 90 - cycle(1, d.ph, t) * 40;
+          const g = ctx.createRadialGradient(mx, my, 0, mx, my, d.r);
+          g.addColorStop(0, `rgba(150,255,205,${d.alpha * (0.6 + 0.4 * (0.5 + 0.5 * cycle(2, d.ph, t)))})`);
+          g.addColorStop(1, 'rgba(150,255,205,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(mx - d.r, my - d.r, d.r * 2, d.r * 2);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 3C — AEROPONIC SPRAY BURSTS (synchronized nozzles) ============
+      const nozzles = [];
+      for (let n = 0; n < 24; n++) {
+        nozzles.push({
+          x: 420 + n * 150,
+          y: 280 + (n % 6) * 330,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 3),
+          sprayCount: 12
+        });
+      }
+
+      function drawSprays(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let n = 0; n < nozzles.length; n++) {
+          const noz = nozzles[n];
+          const burst = 0.5 + 0.5 * cycle(noz.k, noz.ph, t);
+          if (burst < 0.6) continue;
+          const intensity = (burst - 0.6) / 0.4;
+          for (let s = 0; s < noz.sprayCount; s++) {
+            const angle = -Math.PI * 0.4 + (s / noz.sprayCount) * Math.PI * 0.8;
+            const dist = 60 + intensity * 130 + (s % 3) * 20;
+            const px = noz.x + Math.cos(angle) * dist;
+            const py = noz.y + Math.sin(angle) * dist * 0.6;
+            ctx.fillStyle = `rgba(190,255,225,${0.16 * intensity * (1 - dist / 260)})`;
+            ctx.beginPath();
+            ctx.arc(px, py, 7 - intensity * 3, 0, TAU);
+            ctx.fill();
+          }
+          ctx.fillStyle = `rgba(210,255,235,${0.30 * intensity})`;
+          ctx.beginPath();
+          ctx.arc(noz.x, noz.y, 6, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ LAYER 3D — SENSOR TELEMETRY LEDS (tiny blink dots) ============
+      const sensorLeds = [];
+      for (let i = 0; i < 40; i++) {
+        sensorLeds.push({
+          x: rand() * W,
+          y: rand() * H,
+          ph: rand() * TAU,
+          k: 1 + Math.floor(rand() * 4)
+        });
+      }
+
+      function drawSensors(t) {
+        ctx.save();
+        for (let i = 0; i < sensorLeds.length; i++) {
+          const s = sensorLeds[i];
+          const on = cycle(s.k, s.ph, t) > 0.3;
+          if (!on) continue;
+          ctx.fillStyle = `rgba(120,255,180,${0.25 + 0.25 * (0.5 + 0.5 * cycle(2, s.ph, t))})`;
+          ctx.fillRect(s.x, s.y, 3, 3);
+        }
+        ctx.restore();
+      }
+
+      // ============ LAYER 3E — CROP TELEMETRY DISPLAYS (brackets + bars) ============
+      const telemetry = [
+        { x: W * 0.05, y: H * 0.18, label: 'PH 5.8', val: 0.62, hue: '120,255,180' },
+        { x: W * 0.05, y: H * 0.36, label: 'EC 1.4', val: 0.41, hue: '120,255,180' },
+        { x: W * 0.05, y: H * 0.54, label: 'CO2 850', val: 0.80, hue: '120,255,180' },
+        { x: W * 0.90, y: H * 0.18, label: 'TEMP 22C', val: 0.52, hue: '160,220,130' },
+        { x: W * 0.90, y: H * 0.36, label: 'HUM 68%', val: 0.71, hue: '160,220,130' },
+        { x: W * 0.90, y: H * 0.54, label: 'FLOW 4L/M', val: 0.35, hue: '160,220,130' }
+      ];
+
+      function drawTelemetry(t) {
+        ctx.save();
+        ctx.font = '22px monospace';
+        for (let i = 0; i < telemetry.length; i++) {
+          const tm = telemetry[i];
+          const pulse = 0.5 + 0.5 * cycle(2, i * 0.7, t);
+          ctx.fillStyle = `rgba(${tm.hue},${0.3 + pulse * 0.25})`;
+          ctx.fillText(tm.label, tm.x, tm.y);
+
+          ctx.strokeStyle = `rgba(${tm.hue},${0.22})`;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(tm.x, tm.y + 14, 190, 13);
+          ctx.fillStyle = `rgba(${tm.hue},${0.28 + pulse * 0.32})`;
+          ctx.fillRect(tm.x + 2, tm.y + 16, 186 * tm.val * (0.92 + pulse * 0.08), 9);
+
+          const blink = cycle(3, i * 1.9, t) > 0.4;
+          ctx.fillStyle = `rgba(${tm.hue},${blink ? 0.9 : 0.2})`;
+          ctx.fillRect(tm.x - 10, tm.y + 14, 5, 13);
+        }
+        ctx.restore();
+      }
+
+      // ============ LAYER 3F — HARVEST LANE MARKERS (moving conveyor slots) ============
+      function drawHarvestMarkers(t) {
+        const laneY = H * 0.80;
+        const move = (t * 180) % (W + 400) - 200;
+        for (let i = 0; i < 6; i++) {
+          const mx = move + i * 340;
+          if (mx < -120 || mx > W + 120) continue;
+          const slotPulse = 0.5 + 0.5 * cycle(2, i * 0.9, t);
+          ctx.strokeStyle = `rgba(120,255,190,${0.18 + slotPulse * 0.2})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(mx - 30, laneY);
+          ctx.lineTo(mx + 30, laneY);
+          ctx.moveTo(mx, laneY - 18);
+          ctx.lineTo(mx, laneY + 18);
+          ctx.stroke();
+          ctx.fillStyle = `rgba(120,255,190,${0.5 + slotPulse * 0.3})`;
+          ctx.beginPath();
+          ctx.arc(mx, laneY - 26, 5, 0, TAU);
+          ctx.fill();
+        }
+      }
+
+      // ============ LAYER 4 — FLOOR REFLECTION + FOG BAND ============
+      function drawFloor(t) {
+        const floorY = H * 0.93;
+        const fg = ctx.createLinearGradient(0, floorY, 0, H);
+        fg.addColorStop(0, 'rgba(8,30,20,0.9)');
+        fg.addColorStop(1, 'rgba(3,16,10,0.95)');
+        ctx.fillStyle = fg;
+        ctx.fillRect(0, floorY, W, H - floorY);
+
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = `rgba(120,255,180,${0.05 + 0.05 * cycle(1, 2.2, t)})`;
+        ctx.fillRect(0, floorY, W, 4);
+        ctx.globalCompositeOperation = 'source-over';
+
+        const fog = ctx.createLinearGradient(0, floorY - 260, 0, floorY);
+        fog.addColorStop(0, 'rgba(90,200,150,0)');
+        fog.addColorStop(0.5, `rgba(90,200,150,${0.05 + 0.04 * cycle(2, 0.9, t)})`);
+        fog.addColorStop(1, 'rgba(90,200,150,0.14)');
+        ctx.fillStyle = fog;
+        ctx.fillRect(0, floorY - 260, W, 260);
+      }
+
+      // ============ LAYER 5 — FILM STACK (grain, halation, vignette, DOF) ============
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1500; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.045})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawHalation(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        const pulse = 0.5 + 0.5 * cycle(1, 0.4, t);
+        for (let i = 0; i < towers.length; i++) {
+          const tx = towers[i].x;
+          const hg = ctx.createRadialGradient(tx, 700, 30, tx, 700, 900);
+          hg.addColorStop(0, `rgba(120,255,180,${0.03 + pulse * 0.03 * (0.6 + hash(i, 90) * 0.4)})`);
+          hg.addColorStop(1, 'rgba(120,255,180,0)');
+          ctx.fillStyle = hg;
+          ctx.fillRect(tx - 900, -200, 1800, 1800);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function drawVignette() {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.30, W / 2, H / 2, H * 0.98);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.66)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawDOFBlur() {
+        ctx.fillStyle = 'rgba(2,14,9,0.20)';
+        ctx.fillRect(0, 0, W, H);
+        const b1 = ctx.createLinearGradient(0, 0, 0, 340);
+        b1.addColorStop(0, 'rgba(0,0,0,0.45)');
+        b1.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b1;
+        ctx.fillRect(0, 0, W, 340);
+        const b2 = ctx.createLinearGradient(0, H, 0, H - 420);
+        b2.addColorStop(0, 'rgba(0,0,0,0.42)');
+        b2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = b2;
+        ctx.fillRect(0, H - 420, W, 420);
+      }
+
+      // ============ FRAME ============
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawBg(t);
+
+        const cam = camera(t);
+        ctx.save();
+        ctx.translate(cam.x, cam.y);
+        ctx.rotate(cam.r);
+        ctx.scale(cam.s, cam.s);
+        ctx.translate(-W / 2, -H / 2);
+
+        for (let i = 0; i < towers.length; i++) {
+          const depth = 0.82 + (i % 3) * 0.09;
+          ctx.save();
+          ctx.translate(cam.drift * (depth - 1) * 3, 0);
+          drawTower(i, t, depth);
+          ctx.restore();
+        }
+
+        drawFloor(t);
+        ctx.restore();
+
+        drawSprays(t);
+        drawForeground(t);
+        drawDriftMist(t);
+        drawSensors(t);
+
+        ctx.save();
+        ctx.translate(cam.x * 0.85, cam.y * 0.85);
+        drawTelemetry(t);
+        drawHarvestMarkers(t);
+        ctx.restore();
+
+        drawDOFBlur();
+        drawHalation(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function () { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['vertical-farm'] = tl;
+    </script>
+  </div>
+</template>

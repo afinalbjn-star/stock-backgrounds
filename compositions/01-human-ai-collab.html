@@ -1,0 +1,511 @@
+<template id="human-ai-collab-template">
+  <div data-hf-id="hf-ylpj" id="human-ai-collab-root" data-composition-id="human-ai-collab" data-width="3840" data-height="2160">
+    <canvas data-hf-id="hf-eqe6" id="haic-canvas" class="clip" data-start="0" data-duration="15" data-track-index="1"></canvas>
+
+    <style>
+      #human-ai-collab-root {
+        position: relative;
+        width: 3840px;
+        height: 2160px;
+        background: #020408;
+        overflow: hidden;
+      }
+      #haic-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const canvas = document.getElementById('haic-canvas');
+      const ctx = canvas.getContext('2d');
+      const W = 3840, H = 2160;
+      canvas.width = W;
+      canvas.height = H;
+      const T = 15;
+      const TAU = Math.PI * 2;
+
+      function hash(x, y) {
+        var n = x * 374761393 + y * 668265263;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) & 0x7fffffff) / 0x7fffffff;
+      }
+
+      function cycle(freq, phase, t) {
+        return Math.sin(TAU * freq * t / T + phase);
+      }
+
+      const CYAN = '0,220,190';
+      const BLUE = '0,140,255';
+      const MAG = '180,80,255';
+
+      const neonPanels = [];
+      for (let i = 0; i < 9; i++) {
+        neonPanels.push({
+          depth: 0.35 + hash(i, 1) * 0.65,
+          angle: hash(i, 2) * TAU,
+          dist: 430 + hash(i, 3) * 380,
+          w: 260 + hash(i, 4) * 240,
+          h: 150 + hash(i, 5) * 130,
+          hue: i % 3 === 0 ? CYAN : (i % 3 === 1 ? BLUE : MAG),
+          ph: hash(i, 6) * TAU,
+          nodes: Array.from({ length: 6 }, (_, n) => ({
+            nx: (hash(i * 7 + n, 1) - 0.5) * 260,
+            ny: (hash(i * 7 + n, 2) - 0.5) * 150,
+            s: 3 + hash(i * 7 + n, 3) * 6,
+            ph: hash(i * 7 + n, 4) * TAU
+          }))
+        });
+      }
+
+      const neurons = [];
+      for (let i = 0; i < 26; i++) {
+        neurons.push({
+          x: (hash(i, 10) - 0.5) * 780,
+          y: (hash(i, 11) - 0.5) * 420,
+          r: 4 + hash(i, 12) * 8,
+          ph: hash(i, 13) * TAU,
+          c: i % 4 === 0 ? MAG : (i % 2 ? CYAN : BLUE)
+        });
+      }
+      const synapses = [];
+      for (let i = 0; i < neurons.length; i++) {
+        for (let j = i + 1; j < neurons.length; j++) {
+          const dx = neurons[j].x - neurons[i].x;
+          const dy = neurons[j].y - neurons[i].y;
+          if (dx * dx + dy * dy < 160000 && hash(i, j + 50) > 0.55) {
+            synapses.push({ a: i, b: j, ph: hash(i, j + 100) * TAU });
+          }
+        }
+      }
+
+      const streams = [];
+      for (let i = 0; i < 8; i++) {
+        streams.push({
+          x: -340 + i * 100,
+          w: 60 + hash(i, 20) * 50,
+          ph: hash(i, 21) * TAU,
+          speed: 1 + hash(i, 22) * 1.5
+        });
+      }
+
+      function drawBg() {
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, '#04070c');
+        bg.addColorStop(0.55, '#02040a');
+        bg.addColorStop(1, '#000103');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const roomGlow = ctx.createRadialGradient(W * 0.5, H * 0.52, 100, W * 0.5, H * 0.52, 1900);
+        roomGlow.addColorStop(0, 'rgba(0,160,255,0.10)');
+        roomGlow.addColorStop(0.6, 'rgba(0,160,255,0.03)');
+        roomGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = roomGlow;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.strokeStyle = 'rgba(0,220,190,0.06)';
+        ctx.lineWidth = 2;
+        for (let gx = 0; gx < W; gx += 240) {
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, H);
+          ctx.stroke();
+        }
+        for (let gy = 0; gy < H; gy += 240) {
+          ctx.beginPath();
+          ctx.moveTo(0, gy);
+          ctx.lineTo(W, gy);
+          ctx.stroke();
+        }
+
+        const gridGrad = ctx.createLinearGradient(0, H * 0.62, 0, H);
+        gridGrad.addColorStop(0, 'rgba(0,220,190,0)');
+        gridGrad.addColorStop(1, 'rgba(0,220,190,0.07)');
+        ctx.fillStyle = gridGrad;
+        ctx.fillRect(0, H * 0.62, W, H * 0.38);
+      }
+
+      function drawKeyboard(t) {
+        const kbY = H * 0.87;
+        const kbW = W * 0.62;
+        ctx.save();
+        ctx.translate(W / 2, kbY);
+        const tilt = cycle(1, 0.4, t) * 0.015;
+        ctx.rotate(tilt);
+
+        const kbGrad = ctx.createLinearGradient(0, -70, 0, 70);
+        kbGrad.addColorStop(0, 'rgba(30,42,58,0.95)');
+        kbGrad.addColorStop(1, 'rgba(8,14,22,0.98)');
+        ctx.fillStyle = kbGrad;
+        ctx.beginPath();
+        ctx.roundRect(-kbW / 2, -70, kbW, 140, 18);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,220,190,0.35)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-kbW / 2, -70, kbW, 140, 18);
+        ctx.stroke();
+
+        for (let r = 0; r < 3; r++) {
+          for (let k = 0; k < 26; k++) {
+            const kx = -kbW / 2 + 34 + k * ((kbW - 68) / 26);
+            const ky = -46 + r * 38;
+            const lit = hash(r * 26 + k, Math.floor(t * 4) % 2) > 0.82;
+            ctx.fillStyle = lit ? 'rgba(0,220,190,0.9)' : 'rgba(70,90,115,0.5)';
+            ctx.fillRect(kx, ky, 22, 16);
+            if (lit) {
+              const kg = ctx.createRadialGradient(kx + 11, ky + 8, 1, kx + 11, ky + 8, 26);
+              kg.addColorStop(0, 'rgba(0,220,190,0.35)');
+              kg.addColorStop(1, 'rgba(0,220,190,0)');
+              ctx.fillStyle = kg;
+              ctx.fillRect(kx - 16, ky - 19, 54, 54);
+            }
+          }
+        }
+
+        const kbGlow = ctx.createRadialGradient(0, -30, 30, 0, -30, 700);
+        kbGlow.addColorStop(0, `rgba(${CYAN},${0.16 + cycle(2, 0, t) * 0.07})`);
+        kbGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = kbGlow;
+        ctx.fillRect(-700, -700, 1400, 1400);
+        ctx.restore();
+      }
+
+      function drawNeuralCore(t) {
+        const cx = 0, cy = H * 0.32;
+        const pulse = 1 + cycle(2, 0, t) * 0.04;
+
+        ctx.save();
+        ctx.translate(W / 2, cy);
+        ctx.scale(pulse, pulse);
+
+        ctx.globalCompositeOperation = 'lighter';
+        for (let s = 0; s < synapses.length; s++) {
+          const sn = synapses[s];
+          const a = neurons[sn.a], b = neurons[sn.b];
+          const aP = 0.35 + 0.65 * (0.5 + 0.5 * cycle(2, a.ph, t));
+          const bP = 0.35 + 0.65 * (0.5 + 0.5 * cycle(2, b.ph, t));
+          ctx.strokeStyle = `rgba(${a.c},${0.16 * (aP + bP)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.quadraticCurveTo((a.x + b.x) / 2 + Math.sin(t * 1.4 + sn.ph) * 40, (a.y + b.y) / 2, b.x, b.y);
+          ctx.stroke();
+
+          const pulsePos = (t * 0.6 + sn.ph) % 1;
+          const px = a.x + (b.x - a.x) * pulsePos;
+          const py = a.y + (b.y - a.y) * pulsePos;
+          ctx.fillStyle = 'rgba(255,255,255,0.85)';
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, TAU);
+          ctx.fill();
+        }
+
+        for (let i = 0; i < neurons.length; i++) {
+          const n = neurons[i];
+          const glow = 0.5 + 0.5 * cycle(3, n.ph, t);
+          const gr = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 5);
+          gr.addColorStop(0, `rgba(${n.c},${0.28 * glow})`);
+          gr.addColorStop(1, `rgba(${n.c},0)`);
+          ctx.fillStyle = gr;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.r * 5, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = `rgba(${n.c},${0.75 + glow * 0.25})`;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.r * (0.7 + glow * 0.3), 0, TAU);
+          ctx.fill();
+        }
+
+        const core = ctx.createRadialGradient(0, 0, 10, 0, 0, 460);
+        core.addColorStop(0, `rgba(${CYAN},0.30)`);
+        core.addColorStop(0.4, `rgba(${CYAN},0.10)`);
+        core.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = core;
+        ctx.beginPath();
+        ctx.arc(0, 0, 460, 0, TAU);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+      }
+
+      function drawPanels(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < neonPanels.length; i++) {
+          const p = neonPanels[i];
+          const orb = cycle(1, p.angle * 2, t) * 60 * (1.6 - p.depth);
+          const px = Math.cos(p.angle) * p.dist + orb;
+          const py = Math.sin(p.angle) * p.dist * 0.42 + H * 0.30 - 80 + cycle(1, p.ph, t) * 36 * p.depth;
+          const s = 0.55 + p.depth * 0.75;
+          const wob = 1 + cycle(2, p.ph, t) * 0.05;
+
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.scale(s * wob, s / wob);
+
+          const fill = `rgba(${p.hue},${0.04 + p.depth * 0.05})`;
+          ctx.fillStyle = fill;
+          ctx.beginPath();
+          ctx.roundRect(-p.w / 2, -p.h / 2, p.w, p.h, 14);
+          ctx.fill();
+
+          ctx.strokeStyle = `rgba(${p.hue},${0.25 + p.depth * 0.3})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.roundRect(-p.w / 2, -p.h / 2, p.w, p.h, 14);
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(${p.hue},${0.1 + p.depth * 0.12})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.roundRect(-p.w / 2 + 16, -p.h / 2 + 16, p.w - 32, p.h - 32, 8);
+          ctx.stroke();
+
+          for (let n = 0; n < p.nodes.length; n++) {
+            const nd = p.nodes[n];
+            const np = 0.5 + 0.5 * cycle(3, nd.ph, t);
+            ctx.fillStyle = `rgba(${p.hue},${0.4 + np * 0.5})`;
+            ctx.beginPath();
+            ctx.arc(nd.nx, nd.ny, nd.s * (0.6 + np * 0.5), 0, TAU);
+            ctx.fill();
+          }
+
+          const corner = 26;
+          ctx.strokeStyle = `rgba(${p.hue},${0.4 + p.depth * 0.4})`;
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.moveTo(-p.w / 2 + 26, -p.h / 2);
+          ctx.lineTo(-p.w / 2 + 26, -p.h / 2 + corner);
+          ctx.moveTo(-p.w / 2, -p.h / 2 + 26);
+          ctx.lineTo(-p.w / 2 + corner, -p.h / 2 + 26);
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function drawStreams(t) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let s = 0; s < streams.length; s++) {
+          const st = streams[s];
+          const y0 = H * 0.78;
+          for (let c = 0; c < 26; c++) {
+            const off = (t * 340 * st.speed + c * 54 + st.ph * 900) % (y0 - 260);
+            const sy = y0 - off;
+            const head = (off % 54) / 54;
+            const alpha = Math.pow(Math.sin(head * Math.PI), 2);
+            const charH = 20 + head * 26;
+            ctx.fillStyle = `rgba(${CYAN},${0.03 + alpha * 0.3})`;
+            ctx.fillRect(W / 2 + st.x, sy, st.w, charH);
+            if (head > 0.94) {
+              ctx.fillStyle = `rgba(255,255,255,${(head - 0.94) / 0.06 * 0.8})`;
+              ctx.fillRect(W / 2 + st.x, sy, st.w, charH);
+            }
+          }
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function drawBokeh(t) {
+        ctx.save();
+        for (let i = 0; i < 34; i++) {
+          const size = 26 + hash(i, 30) * 110;
+          const freq = 1 + (i % 3);
+          const bx = hash(i, 31) * W + cycle(freq, hash(i, 32) * TAU, t) * 260;
+          const by = hash(i, 33) * H + cycle(freq + 1, hash(i, 34) * TAU, t) * 180;
+          const c = i % 3 === 0 ? CYAN : (i % 3 === 1 ? BLUE : MAG);
+          const alpha = 0.10 + hash(i, 35) * 0.16;
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, size);
+          g.addColorStop(0, `rgba(${c},${alpha})`);
+          g.addColorStop(0.75, `rgba(${c},${alpha * 0.35})`);
+          g.addColorStop(1, `rgba(${c},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(bx, by, size, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function drawGrain(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.save();
+        for (let i = 0; i < 1200; i++) {
+          const gx = hash(i, frame) * W;
+          const gy = hash(i, frame + 4000) * H;
+          const gs = 1 + hash(i, frame + 8000) * 2;
+          ctx.fillStyle = `rgba(255,255,255,${hash(i, frame + 12000) * 0.05})`;
+          ctx.fillRect(gx, gy, gs, gs);
+        }
+        ctx.restore();
+      }
+
+      function drawVignette(t) {
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.95);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.62)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // ============ LENS FLARE LAYER (anamorphic ghost streaks) ============
+      function drawLensFlare(t) {
+        const fx = W * 0.5, fy = H * 0.3;
+        const pulse = 0.5 + 0.5 * cycle(2, 1.2, t);
+        const streakCount = 5;
+        ctx.globalCompositeOperation = 'lighter';
+        for (let s = 0; s < streakCount; s++) {
+          const sx = fx + cycle(1, s * 1.3, t) * 420;
+          const sy = fy + cycle(2, s * 0.7, t) * 160;
+          const angle = -0.12 + s * 0.05;
+          const len = 500 + s * 160;
+          const w = 26 - s * 4;
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(angle);
+          const sg = ctx.createLinearGradient(-len / 2, 0, len / 2, 0);
+          sg.addColorStop(0, 'rgba(120,240,220,0)');
+          sg.addColorStop(0.5, `rgba(120,240,220,${(0.05 + pulse * 0.04) * (1 - s * 0.15)})`);
+          sg.addColorStop(1, 'rgba(120,240,220,0)');
+          ctx.fillStyle = sg;
+          ctx.fillRect(-len / 2, -w / 2, len, w);
+          ctx.restore();
+        }
+
+        const ghost = ctx.createRadialGradient(fx - 300, fy - 120, 4, fx - 300, fy - 120, 60);
+        ghost.addColorStop(0, `rgba(120,220,255,${0.12 + pulse * 0.10})`);
+        ghost.addColorStop(1, 'rgba(120,220,255,0)');
+        ctx.fillStyle = ghost;
+        ctx.beginPath();
+        ctx.arc(fx - 300, fy - 120, 60, 0, TAU);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // ============ SCANLINE HUD LAYER (holographic readout) ============
+      function drawScanHUD(t) {
+        const frame = Math.floor(t * 60) % 900;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = `rgba(0,220,190,${0.025 + 0.015 * cycle(2, 2.2, t)})`;
+        for (let y = 0; y < H; y += 7) {
+          ctx.fillRect(0, y, W, 1.2);
+        }
+
+        const readouts = [
+          { x: W * 0.06, y: H * 0.86, w: 460, h: 130, label: 'NEURAL THROUGHPUT' },
+          { x: W * 0.76, y: H * 0.08, w: 420, h: 110, label: 'TOKEN FLOW' }
+        ];
+        for (let r = 0; r < readouts.length; r++) {
+          const rd = readouts[r];
+          ctx.strokeStyle = 'rgba(0,220,190,0.20)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(rd.x, rd.y, rd.w, rd.h, 8);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(0,220,190,0.10)';
+          ctx.font = '20px monospace';
+          ctx.fillText(rd.label, rd.x + 18, rd.y + 34);
+
+          const barW = rd.w - 60;
+          const val = hash(Math.floor(t * 4), r) * 0.5 + 0.5;
+          ctx.fillStyle = 'rgba(0,220,190,0.5)';
+          ctx.fillRect(rd.x + 30, rd.y + 60, barW * val, 14);
+          ctx.strokeStyle = 'rgba(0,220,190,0.25)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(rd.x + 30, rd.y + 60, barW, 14);
+
+          const sparkW = rd.w - 40;
+          ctx.strokeStyle = 'rgba(0,220,190,0.4)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let px = 0; px < sparkW; px += 6) {
+            const py = rd.y + 100 - hash(Math.floor(t * 6), px) * 26;
+            if (px === 0) ctx.moveTo(rd.x + 20 + px, py);
+            else ctx.lineTo(rd.x + 20 + px, py);
+          }
+          ctx.stroke();
+        }
+
+        const crossX = W * 0.5, crossY = H * 0.30;
+        ctx.strokeStyle = 'rgba(0,255,220,0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(crossX - 30, crossY);
+        ctx.lineTo(crossX + 30, crossY);
+        ctx.moveTo(crossX, crossY - 30);
+        ctx.lineTo(crossX, crossY + 30);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0,255,220,0.5)';
+        ctx.fillRect(crossX - 3, crossY - 3, 6, 6);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function drawHalation(t) {
+        const pulse = 0.5 + 0.5 * cycle(1, 1.7, t);
+        const h = ctx.createRadialGradient(W / 2, H * 0.3, 60, W / 2, H * 0.3, 1300);
+        h.addColorStop(0, `rgba(120,255,235,${0.035 + pulse * 0.03})`);
+        h.addColorStop(1, 'rgba(120,255,235,0)');
+        ctx.fillStyle = h;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function drawFrame(t) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        drawBg();
+
+        const driftX = cycle(1, 0.2, t) * 42;
+        const driftY = cycle(2, 0.8, t) * 20;
+        const driftS = 1 + cycle(1, 3.1, t) * 0.022;
+        const driftR = cycle(1, 5.3, t) * 0.0035;
+
+        ctx.save();
+        ctx.translate(W / 2 + driftX * 0.3, H / 2 + driftY * 0.3);
+        ctx.rotate(driftR * 0.4);
+        ctx.scale(driftS, driftS);
+        ctx.translate(-W / 2, -H / 2);
+        drawNeuralCore(t);
+        drawStreams(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(W / 2 + driftX * 0.62, H / 2 + driftY * 0.62);
+        ctx.rotate(driftR * 0.7);
+        ctx.scale(driftS * 1.01, driftS * 1.01);
+        ctx.translate(-W / 2, -H / 2);
+        drawPanels(t);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(W / 2 + driftX, H / 2 + driftY);
+        ctx.rotate(driftR);
+        ctx.scale(driftS, driftS);
+        ctx.translate(-W / 2, -H / 2);
+        drawKeyboard(t);
+        ctx.restore();
+
+drawBokeh(t);
+        drawLensFlare(t);
+        drawScanHUD(t);
+        drawHalation(t);
+        drawVignette();
+        drawGrain(t);
+      }
+
+      tl.to({}, {
+        duration: T,
+        ease: 'none',
+        onUpdate: function() { drawFrame(this.time()); }
+      }, 0);
+
+      window.__timelines['human-ai-collab'] = tl;
+    </script>
+  </div>
+</template>
