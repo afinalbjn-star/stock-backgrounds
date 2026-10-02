@@ -93,3 +93,71 @@ Fix all errors before presenting the result. Warnings should be reviewed before 
 4. Videos use `muted` with a separate `<audio>` element for the audio track
 5. Sub-compositions use `data-composition-src="compositions/file.html"` to reference other HTML files
 6. Only deterministic logic — no `Date.now()`, no `Math.random()`, no network fetches
+
+---
+
+# Blender clips
+
+Cycles scenes live in `blender/scenes/<NNN_slug>/` and are rendered by
+`.github/workflows/render-blender-loop.yml`, which is `workflow_dispatch`
+**only**. The HyperFrames pipeline above is untouched by this.
+
+```powershell
+gh workflow run render-blender-loop.yml -f scene=003_pcb-ai-chip-loop
+```
+
+| file | role |
+| --- | --- |
+| `blender/scenes/<slug>/scene.blend` | the scene — tracked, it is the source of truth |
+| `blender/scenes/<slug>/metadata.json` | delivery spec, keywords, marketplaces |
+| `blender/scenes/<slug>/renders/` | gitignored output |
+| `blender/scripts/ci_settings.py` | env-driven render overrides, runs before `-a` |
+| `blender/scripts/encode.py` | PNG sequence into H.264 + ProRes + market sheet |
+| `blender/scripts/qc_loop.py` | structural + PSNR seam gate |
+| `blender/scripts/inspect_scene.py` | headless inventory, proves the loop closes |
+
+## How the loop is guaranteed
+
+Prove it **before** rendering, not after. Every animated value in a Blender
+scene must be a driver of the form
+
+```
+sin((frame - 1) * 2*pi/720)      # at integer harmonics only
+```
+
+so frame 721 evaluates to frame 1 to within float precision.
+
+```powershell
+blender -b blender\scenes\<slug>\scene.blend -P blender\scripts\inspect_scene.py
+```
+
+It prints `LOOP CLOSES` or `LOOP DOES NOT CLOSE` together with the measured
+camera and aim-target difference. If it says the latter, stop — do not spend
+GPU time.
+
+**The trap that already bit this scene once:** a particle driver of
+`sin(frame * 2*pi/720 * 1.3)` looks periodic and is not. 1.3 cycles do not fit
+720 frames, so it drifted 0.68 units across the wrap. Only integer harmonics
+close the loop.
+
+`qc_loop.py` is the second line of defence, on real pixels: it measures the
+PSNR between the last and first frame and holds it to a 25 dB floor.
+
+## Blender specifics
+
+- Cycles runs CPU-only on GitHub runners; `ci_settings.py` enables auto-tiling
+  and disables caustics. Do not push samples past 512 without saying so — 720
+  frames is already a long job.
+- `scene.render.filepath` is set by `ci_settings.py`, so never hard-code an
+  output path in the `.blend`.
+- Compositor glare needs a `CompositorNodeRLayers` **inside** the group. A
+  `NodeGroupInput` on `scene.compositing_node_group` renders pure white — it
+  receives no render result in Blender 5.x.
+
+## Blender clip caveats
+
+- `003_pcb-ai-chip-loop` carries visible text (an "AI" mark etched into the
+  chip). It was explicitly requested and is recorded as
+  `"no visible text or logo": false` in that clip's `delivery_checklist`. It
+  does not satisfy the wordless-background rule above and is not a drop-in
+  match for those collections.

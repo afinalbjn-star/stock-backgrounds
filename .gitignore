@@ -2,3 +2,5 @@ renders/
 node_modules/
 .debug/
 preview.log
+# Blender clip output and backups
+*.blend1

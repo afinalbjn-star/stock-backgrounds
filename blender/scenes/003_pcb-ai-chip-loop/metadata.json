@@ -1,0 +1,90 @@
+{
+  "$schema_version": 1,
+  "slug": "003-pcb-ai-chip-loop",
+  "composition_id": "pcb-ai-chip-luxury-loop",
+  "title": "AI Chip Circuit Board Luxury Loop",
+  "status": "draft",
+  "created": "2026-10-02",
+  "renderer": "blender-cycles",
+  "scene": "blender/scenes/003_pcb-ai-chip-loop/scene.blend",
+
+  "delivery": {
+    "canvas": { "width": 3840, "height": 2160 },
+    "render_resolution": { "width": 3840, "height": 2160, "label": "4K UHD" },
+    "fps": 60,
+    "duration_sec": 12,
+    "frames": 720,
+    "loop": "seamless",
+    "container": "mp4",
+    "quality_tier": "high",
+    "color": { "space": "rec709", "transfer": "bt709", "primaries": "bt709", "bit_depth": 8 },
+    "intermediate": "PNG 16-bit, Cycles 256 samples + OpenImageDenoise, AgX view transform"
+  },
+
+  "loop": {
+    "seamless": true,
+    "kind": "background",
+    "bookends": "none",
+    "period_frames": 720,
+    "method": "Every animated value is a driver expression of the form sin((frame-1) * 2*pi/720) at an integer harmonic, so frame 721 evaluates to frame 1. Camera orbit, focal-length breathing, trace emission pulses, particle drift and light intensity all use this form.",
+    "verification": [
+      "blender/scripts/inspect_scene.py (numeric closure before rendering)",
+      "blender/scripts/qc_loop.py (PSNR seam gate on the rendered frames)"
+    ]
+  },
+
+  "keywords": [
+    "circuit board",
+    "microchip",
+    "semiconductor",
+    "processor",
+    "artificial intelligence",
+    "technology",
+    "data",
+    "network",
+    "gold",
+    "glowing",
+    "macro",
+    "electronics",
+    "innovation",
+    "futuristic",
+    "abstract",
+    "background",
+    "loop",
+    "seamless",
+    "bokeh",
+    "silicon"
+  ],
+
+  "marketplaces": {
+    "pond5": {
+      "category": "Technology / Abstract",
+      "license": "Standard",
+      "tags": ["circuit board", "microchip", "technology", "glowing", "gold", "macro", "4k", "60fps", "loop"],
+      "notes": "Upload the MP4 master plus a small looping preview."
+    },
+    "adobe_stock": {
+      "collection": "Motion Graphics / Abstract Backgrounds",
+      "content_type": "Motion Graphics",
+      "tags": ["circuit board", "microchip", "artificial intelligence", "glowing lines", "technology background", "seamless loop", "4k", "60 fps"],
+      "notes": "Standard License. Model Released = No, Property Released = No (fully synthetic, no third-party asset). This clip carries visible text ('AI' etched into the chip) — declare it on upload and target the Motion Graphics / Tech categories, which accept typography. File is 3840x2160, so it must be submitted as Video, never as an MOGRT template (Adobe rejects 4K MOGRT)."
+    }
+  },
+
+  "notes": {
+    "text_in_frame": "The glowing 'AI' mark on the chip top is deliberate and was explicitly requested. It departs from the repo default of shipping wordless backgrounds, so this clip is not a drop-in match for wordless-background collections.",
+    "genai": "No generative-AI model was used. Geometry is scripted primitives and curves; all materials are procedural shader graphs.",
+    "reference": "Art direction was authored from a reference image of a microchip on a dark PCB with glowing orange and cyan traces."
+  },
+
+  "delivery_checklist": {
+    "3840x2160": false,
+    "60 fps": false,
+    "duration 10-15s": true,
+    "seamless loop verified": false,
+    "no visible text or logo": false,
+    "no recognizable trademark": true,
+    "no stock-footage watermark": true,
+    "clean encode (no dropped frames)": false
+  }
+}
