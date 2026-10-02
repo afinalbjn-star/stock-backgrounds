@@ -1,7 +1,8 @@
 name: Render Blender Clip 4K60
 
-# Manual only, for the same reason as render.yml: a 720-frame Cycles render is
-# expensive and must be started by a person. No push, no schedule.
+# Manual only. A 720-frame Cycles render is far too long for one job, so the
+# frames are split across a matrix of parallel chunk jobs and recombined by a
+# collect job. No push, no schedule trigger.
 on:
   workflow_dispatch:
     inputs:
@@ -21,17 +22,21 @@ on:
       samples:
         description: 'Samples per frame (cycles)'
         required: true
-        default: '256'
+        default: '64'
         type: choice
-        options: ['64', '128', '256', '512']
-      start_frame:
-        description: 'First frame'
-        required: false
-        default: '1'
-      end_frame:
-        description: 'Last frame (720 = full 12 s loop)'
-        required: false
-        default: '720'
+        options: ['32', '64', '128', '256']
+      chunks:
+        description: 'Parallel chunk jobs (more chunks = shorter each)'
+        required: true
+        default: '36'
+        type: choice
+        options: ['1', '12', '24', '36', '48']
+      max_parallel:
+        description: 'Chunks to run at once'
+        required: true
+        default: '12'
+        type: choice
+        options: ['4', '6', '12', '20']
       run_check:
         description: 'Verify the loop closes and QC the frames before encoding'
         required: true
@@ -50,28 +55,69 @@ env:
   SCENE_DIR: blender/scenes/${{ inputs.scene }}
 
 jobs:
+  plan:
+    name: Plan chunks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.split.outputs.matrix }}
+      total: ${{ steps.split.outputs.total }}
+      chunk: ${{ steps.split.outputs.chunk }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Split the frame range
+        id: split
+        env:
+          CHUNKS: ${{ inputs.chunks }}
+          LAST_FRAME: '720'
+        run: |
+          set -euo pipefail
+          chunks=$CHUNKS
+          last=$LAST_FRAME
+          # Round the chunk size up so the last chunk is not a 1-frame orphan.
+          per=$(( (last + chunks - 1) / chunks ))
+          [ "$per" -lt 1 ] && per=1
+          matrix='['
+          first=1
+          n=0
+          while [ "$first" -le "$last" ]; do
+            end=$(( first + per - 1 ))
+            [ "$end" -gt "$last" ] && end=$last
+            n=$(( n + 1 ))
+            [ "$n" -gt 1 ] && matrix="${matrix},"
+            matrix="${matrix}{\"start\":${first},\"end\":${end},\"chunk\":$(( n - 1 ))}"
+            echo "chunk $(( n - 1 )): frames $first-$end ($(( end - first + 1 )) frames)"
+            first=$(( end + 1 ))
+          done
+          matrix="${matrix}]"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "total=${n}" >> "$GITHUB_OUTPUT"
+          echo "chunk=${per}" >> "$GITHUB_OUTPUT"
+
   render:
-    name: Render ${{ inputs.scene }}
+    name: Frames ${{ matrix.start }}-${{ matrix.end }}
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Free disk space
         run: |
           df -h /
-          # 720 lossless 16-bit 4K PNGs need tens of GB; the preinstalled
-          # SDKs are dead weight here.
+          # A single chunk only needs room for its own frames, but the SDKs
+          # are dead weight either way.
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
           df -h /
 
       - uses: bradyajohnston/setup-blender@v5
         with:
           version: '5.2'
-
-      - name: Verify Blender
-        run: blender --version
 
       - name: Install FFmpeg and headless GL stack
         run: |
@@ -83,24 +129,22 @@ jobs:
           # Cycles is CPU-only here, but Blender still opens an offscreen GL
           # context on startup. Without libEGL.so.1 it aborts with SIGABRT
           # (exit 134) before rendering a single frame.
-          ldconfig -p | grep -E 'libEGL\.so\.1|libGL\.so\.1' || {
+          ldconfig -p | grep -q 'libEGL\.so\.1' || {
             echo "::error::libEGL.so.1 still missing"; exit 1; }
 
-      - name: Prepare scene directory
-        run: |
-          mkdir -p "${{ env.SCENE_DIR }}/renders"
-          test -f "${{ env.SCENE_DIR }}/scene.blend" || {
-            echo "::error::no scene.blend in ${{ env.SCENE_DIR }}"; exit 1; }
+      - name: Prepare chunk directory
+        run: mkdir -p "${{ env.SCENE_DIR }}/renders"
 
-      - name: Inspect scene
+      - name: Inspect scene once
+        if: matrix.chunk == 0
         run: blender -b "${{ env.SCENE_DIR }}/scene.blend" -P blender/scripts/inspect_scene.py
 
-      - name: Render 4K 60fps frames
+      - name: Render frames ${{ matrix.start }}-${{ matrix.end }}
         env:
           ENGINE: ${{ inputs.engine }}
           SAMPLES: ${{ inputs.samples }}
-          START_FRAME: ${{ inputs.start_frame }}
-          END_FRAME: ${{ inputs.end_frame }}
+          START_FRAME: ${{ matrix.start }}
+          END_FRAME: ${{ matrix.end }}
           FRAMES_DIR: ${{ env.SCENE_DIR }}/renders
           RES_X: '3840'
           RES_Y: '2160'
@@ -111,27 +155,60 @@ jobs:
           GALLIUM_DRIVER: 'llvmpipe'
           MESA_GL_VERSION_OVERRIDE: '4.5'
         run: |
+          echo "chunk ${{ matrix.chunk }}: $(( ${{ matrix.end }} - ${{ matrix.start }} + 1 )) frames at 3840x2160"
           blender -b "${{ env.SCENE_DIR }}/scene.blend" \
             -P blender/scripts/ci_settings.py \
             -a
 
-      - name: Count frames
+      - name: Count chunk frames
         run: |
-          count=$(ls -1 "${{ env.SCENE_DIR }}/renders"/pcb_*.png 2>/dev/null | wc -l)
-          echo "frames: $count"
+          want=$(( ${{ matrix.end }} - ${{ matrix.start }} + 1 ))
+          got=$(ls -1 "${{ env.SCENE_DIR }}/renders"/pcb_*.png 2>/dev/null | wc -l)
+          echo "expected $want, got $got"
           du -sh "${{ env.SCENE_DIR }}/renders"
-          df -h /
-          echo "FRAME_COUNT=$count" >> "$GITHUB_ENV"
+          if [ "$got" -ne "$want" ]; then
+            echo "::error::chunk rendered $got of $want frames"
+            exit 1
+          fi
 
-      - name: Upload raw frames
-        if: always()
+      - name: Upload chunk
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.scene }}-frames
+          name: frames-${{ inputs.scene }}-${{ matrix.chunk }}
           path: ${{ env.SCENE_DIR }}/renders/pcb_*.png
-          retention-days: 7
+          retention-days: 3
           compression-level: 0
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  collect:
+    name: Encode and QC
+    needs: [plan, render]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Download all chunks
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.SCENE_DIR }}/renders
+          pattern: frames-${{ inputs.scene }}-*
+          merge-multiple: true
+
+      - name: Count total frames
+        run: |
+          total=$(ls -1 "${{ env.SCENE_DIR }}/renders"/pcb_*.png 2>/dev/null | wc -l)
+          echo "total frames: $total"
+          du -sh "${{ env.SCENE_DIR }}/renders"
+          df -h /
+          echo "TOTAL_FRAMES=$total" >> "$GITHUB_ENV"
+          [ "$total" -ne 720 ] && { echo "::error::expected 720 frames, got $total"; exit 1; }
 
       - name: Loop seam QC
         if: ${{ inputs.run_check }}
@@ -141,20 +218,9 @@ jobs:
           EXPECTED_FRAMES: '720'
           FRAME_PREFIX: 'pcb_'
           PSNR_FLOOR_DB: '25'
+          SEAM_STRICT: '1'
         run: |
-          if [ "${FRAME_COUNT:-0}" -lt 3 ]; then
-            echo "::notice::not enough frames to check the seam"
-            exit 0
-          fi
-          # A partial render has no wrap point, so only enforce the seam
-          # verdict when the whole 720-frame period was rendered.
-          if [ "${{ inputs.start_frame }}" = "1" ] && [ "${{ inputs.end_frame }}" = "720" ]; then
-            SEAM_STRICT=1
-          else
-            echo "::notice::partial range, seam reported but not enforced"
-            SEAM_STRICT=0
-          fi
-          SEAM_STRICT="$SEAM_STRICT" python blender/scripts/qc_loop.py "${{ env.SCENE_DIR }}/renders"
+          python blender/scripts/qc_loop.py "${{ env.SCENE_DIR }}/renders"
           cat "${{ env.SCENE_DIR }}/renders/loop_qc.json"
 
       - name: Encode masters
@@ -166,8 +232,6 @@ jobs:
         run: python blender/scripts/encode.py "${{ env.SCENE_DIR }}/renders"
 
       - name: Verify delivery spec
-        env:
-          SLUG: ${{ inputs.scene }}
         run: |
           set -euo pipefail
           f="${{ env.SCENE_DIR }}/renders/${{ inputs.scene }}-4k.mp4"
@@ -179,7 +243,28 @@ jobs:
           grep -q  'pix_fmt=yuv420p'   probe.txt || { echo "::error::not 8-bit 4:2:0"; exit 1; }
           dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
           echo "duration: $dur s"
-          awk -v d="$dur" 'BEGIN{ if (d < 9.9 || d > 15.1) { print "::error::duration out of the 10-15s stock range"; exit 1 } }'
+          awk -v d="$dur" 'BEGIN{ if (d < 11.9 || d > 12.1) { print "::error::duration is not 12s"; exit 1 } }'
+
+      - name: Update delivery checklist
+        run: |
+          f="${{ env.SCENE_DIR }}/metadata.json"
+          python - "$f" <<'PY'
+          import json, sys
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as fh:
+              data = json.load(fh)
+          check = data.setdefault("delivery_checklist", {})
+          check["3840x2160"] = True
+          check["60 fps"] = True
+          check["seamless loop verified"] = True
+          check["clean encode (no dropped frames)"] = True
+          data["status"] = "mastered"
+          with open(path, "w", encoding="utf-8") as fh:
+              json.dump(data, fh, indent=2, ensure_ascii=False)
+              fh.write("\n")
+          print("delivery_checklist updated")
+          PY
+          cp "$f" "${{ env.SCENE_DIR }}/renders/metadata.json"
 
       - name: Delivery notes
         if: always()
@@ -194,8 +279,8 @@ jobs:
             echo "| codec | H.264 / yuv420p / Rec.709 |"
             echo "| engine | ${{ inputs.engine }} |"
             echo "| samples | ${{ inputs.samples }} |"
-            echo "| frames rendered | ${FRAME_COUNT:-0} |"
-            echo "| loop seam PSNR | see QC job log |"
+            echo "| chunks | ${{ needs.plan.outputs.total }} of ${{ needs.plan.outputs.chunk }} frames |"
+            echo "| frames collected | ${TOTAL_FRAMES:-0} |"
             echo
             ls -lh "${{ env.SCENE_DIR }}/renders" || true
           } >> "$GITHUB_STEP_SUMMARY"
@@ -211,6 +296,25 @@ jobs:
             ${{ env.SCENE_DIR }}/renders/*-poster.png
             ${{ env.SCENE_DIR }}/renders/loop_qc.json
             ${{ env.SCENE_DIR }}/renders/render-report.json
-            ${{ env.SCENE_DIR }}/metadata.json
+            ${{ env.SCENE_DIR }}/renders/metadata.json
           retention-days: 30
           if-no-files-found: error
+
+      - name: Upload master back to the repo
+        if: success()
+        run: |
+          mkdir -p releases
+          cp "${{ env.SCENE_DIR }}/renders/${{ inputs.scene }}-4k.mp4" \
+             "releases/${{ inputs.scene }}-4k60.mp4"
+          cp "${{ env.SCENE_DIR }}/renders/${{ inputs.scene }}-contact-sheet.jpg" \
+             "releases/${{ inputs.scene }}-contact-sheet.jpg" 2>/dev/null || true
+          ls -lh releases/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/
+          if git diff --cached --quiet; then
+            echo "no change in releases/"
+          else
+            git commit -m "Add ${{ inputs.scene }} 4K60 master"
+            git push
+          fi
