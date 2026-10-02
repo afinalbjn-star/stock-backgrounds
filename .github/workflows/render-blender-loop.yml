@@ -73,11 +73,18 @@ jobs:
       - name: Verify Blender
         run: blender --version
 
-      - name: Install FFmpeg
+      - name: Install FFmpeg and headless GL stack
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libegl1 libgl1 libglx-mesa0 libgl1-mesa-dri libgomp1
           ffmpeg -version | head -1
+          # Cycles is CPU-only here, but Blender still opens an offscreen GL
+          # context on startup. Without libEGL.so.1 it aborts with SIGABRT
+          # (exit 134) before rendering a single frame.
+          ldconfig -p | grep -E 'libEGL\.so\.1|libGL\.so\.1' || {
+            echo "::error::libEGL.so.1 still missing"; exit 1; }
 
       - name: Prepare scene directory
         run: |
@@ -98,6 +105,11 @@ jobs:
           RES_X: '3840'
           RES_Y: '2160'
           FPS: '60'
+          # Headless runners have no GPU: force Mesa's software rasteriser so
+          # the offscreen GL context initialises instead of aborting.
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: 'llvmpipe'
+          MESA_GL_VERSION_OVERRIDE: '4.5'
         run: |
           blender -b "${{ env.SCENE_DIR }}/scene.blend" \
             -P blender/scripts/ci_settings.py \
