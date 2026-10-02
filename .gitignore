@@ -4,3 +4,5 @@ node_modules/
 preview.log
 # Blender clip output and backups
 *.blend1
+
+__pycache__/

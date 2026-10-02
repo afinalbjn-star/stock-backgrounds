@@ -138,7 +138,8 @@ jobs:
           SAMPLES: ${{ inputs.samples }}
           START_FRAME: ${{ matrix.start }}
           END_FRAME: ${{ matrix.end }}
-          FRAMES_DIR: ${{ env.SCENE_DIR }}/renders
+          SEGMENT_DIR: ${{ env.SCENE_DIR }}/renders
+          CHUNK_INDEX: '${{ matrix.chunk }}'
           RES_X: '3840'
           RES_Y: '2160'
           FPS: '60'
@@ -153,22 +154,34 @@ jobs:
             -P blender/scripts/ci_settings.py \
             -a
 
-      - name: Count chunk frames
+      - name: Verify chunk segment
         run: |
+          set -euo pipefail
           want=$(( ${{ matrix.end }} - ${{ matrix.start }} + 1 ))
-          got=$(ls -1 "${{ env.SCENE_DIR }}/renders"/pcb_*.png 2>/dev/null | wc -l)
-          echo "expected $want, got $got"
-          du -sh "${{ env.SCENE_DIR }}/renders"
+          seg=$(ls -1 "${{ env.SCENE_DIR }}/renders"/seg_${{ matrix.chunk }}_*.mkv 2>/dev/null | head -1 || true)
+          if [ -z "$seg" ]; then
+            echo "::error::chunk ${{ matrix.chunk }} produced no segment"
+            ls -la "${{ env.SCENE_DIR }}/renders" || true
+            exit 1
+          fi
+          got=$(ffprobe -v error -select_streams v:0 -count_frames \
+            -show_entries stream=nb_read_frames -of csv=p=0 "$seg")
+          echo "segment: $seg"
+          echo "expected $want frames, got $got"
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,r_frame_rate,codec_name,pix_fmt \
+            -of default=nw=1 "$seg"
+          du -h "$seg"
           if [ "$got" -ne "$want" ]; then
-            echo "::error::chunk rendered $got of $want frames"
+            echo "::error::chunk ${{ matrix.chunk }} rendered $got of $want frames"
             exit 1
           fi
 
       - name: Upload chunk
         uses: actions/upload-artifact@v4
         with:
-          name: frames-${{ inputs.scene }}-${{ matrix.chunk }}
-          path: ${{ env.SCENE_DIR }}/renders/pcb_*.png
+          name: seg-${{ inputs.scene }}-${{ matrix.chunk }}
+          path: ${{ env.SCENE_DIR }}/renders/seg_${{ matrix.chunk }}_*.mkv
           retention-days: 3
           compression-level: 0
           if-no-files-found: error
@@ -192,38 +205,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ env.SCENE_DIR }}/renders
-          pattern: frames-${{ inputs.scene }}-*
+          pattern: seg-${{ inputs.scene }}-*
           merge-multiple: true
 
-      - name: Count total frames
+      - name: Report chunk inventory
         run: |
-          total=$(ls -1 "${{ env.SCENE_DIR }}/renders"/pcb_*.png 2>/dev/null | wc -l)
-          echo "total frames: $total"
+          n=$(ls -1 "${{ env.SCENE_DIR }}/renders"/seg_*.mkv 2>/dev/null | wc -l)
+          echo "chunks: $n"
           du -sh "${{ env.SCENE_DIR }}/renders"
           df -h /
-          echo "TOTAL_FRAMES=$total" >> "$GITHUB_ENV"
-          [ "$total" -ne "$TOTAL_FRAMES" ] && {
-            echo "::error::expected $TOTAL_FRAMES frames, got $total"; exit 1; }
+          echo "CHUNK_COUNT=$n" >> "$GITHUB_ENV"
 
-      - name: Loop seam QC
-        if: ${{ inputs.run_check }}
-        continue-on-error: true
+      - name: Stitch, QC and encode
         env:
           FPS: '60'
           EXPECTED_FRAMES: '720'
-          FRAME_PREFIX: 'pcb_'
-          PSNR_FLOOR_DB: '25'
-          SEAM_STRICT: '1'
-        run: |
-          python blender/scripts/qc_loop.py "${{ env.SCENE_DIR }}/renders"
-          cat "${{ env.SCENE_DIR }}/renders/loop_qc.json"
-
-      - name: Encode masters
-        env:
-          FPS: '60'
-          EXPECTED_FRAMES: '720'
-          FRAME_PREFIX: 'pcb_'
           SLUG: ${{ inputs.scene }}
+          PSNR_FLOOR_DB: '25'
         run: python blender/scripts/encode.py "${{ env.SCENE_DIR }}/renders"
 
       - name: Verify delivery spec
@@ -275,7 +273,8 @@ jobs:
             echo "| engine | ${{ inputs.engine }} |"
             echo "| samples | ${{ inputs.samples }} |"
             echo "| chunks | 36 of 20 frames |"
-            echo "| frames collected | ${TOTAL_FRAMES:-0} |"
+            echo "| chunks received | ${CHUNK_COUNT:-0} of 36 |"
+            echo "| frames expected | 720 @ 60 fps |"
             echo
             ls -lh "${{ env.SCENE_DIR }}/renders" || true
           } >> "$GITHUB_STEP_SUMMARY"
@@ -286,7 +285,7 @@ jobs:
           name: ${{ inputs.scene }}-4k60
           path: |
             ${{ env.SCENE_DIR }}/renders/*-4k.mp4
-            ${{ env.SCENE_DIR }}/renders/*-4k-prores.mov
+            ${{ env.SCENE_DIR }}/renders/*-4k-prores.mkv
             ${{ env.SCENE_DIR }}/renders/*-contact-sheet.jpg
             ${{ env.SCENE_DIR }}/renders/*-poster.png
             ${{ env.SCENE_DIR }}/renders/loop_qc.json

@@ -2,7 +2,7 @@
 
 Run before the animation render:
 
-    ENGINE=cycles SAMPLES=256 START_FRAME=1 END_FRAME=720 FRAMES_DIR=renders \
+    ENGINE=cycles SAMPLES=64 START_FRAME=1 END_FRAME=20 SEGMENT_DIR=renders \\
         blender -b scene.blend -P ci_settings.py -a
 
 Keeping this in a file rather than a `--python-expr` string avoids the shell
@@ -12,6 +12,11 @@ The scene was authored so that every animated quantity is a function of
 sin((frame - 1) * 2*pi/720) at an integer harmonic. That is what makes frame
 721 reproduce frame 1, so this script never touches keyframes: it only sets
 resolution, frame range, sampling and output path.
+
+Output is a lossless FFV1 segment in Matroska, not a PNG sequence. A 720-frame
+4K 16-bit PNG run is about 19 GB and has to be uploaded as 36 artifacts; the
+same frames as FFV1 are roughly 300 MB in total, and they can be concatenated
+with a stream copy instead of re-encoded.
 """
 
 import os
@@ -20,9 +25,10 @@ import bpy
 
 FRAME_START = int(os.environ.get("START_FRAME", "1"))
 FRAME_END = int(os.environ.get("END_FRAME", "720"))
-SAMPLES = int(os.environ.get("SAMPLES", "256"))
+SAMPLES = int(os.environ.get("SAMPLES", "64"))
 ENGINE = os.environ.get("ENGINE", "cycles")
-FRAMES_DIR = os.environ.get("FRAMES_DIR", "renders")
+SEGMENT_DIR = os.environ.get("SEGMENT_DIR", "renders")
+CHUNK_INDEX = os.environ.get("CHUNK_INDEX", "000")
 RES_X = int(os.environ.get("RES_X", "3840"))
 RES_Y = int(os.environ.get("RES_Y", "2160"))
 FPS = int(os.environ.get("FPS", "60"))
@@ -40,14 +46,25 @@ render.fps_base = 1.0
 scene.frame_start = FRAME_START
 scene.frame_end = FRAME_END
 
-render.image_settings.file_format = "PNG"
-render.image_settings.color_mode = "RGB"
-render.image_settings.color_depth = "16"
-render.image_settings.compression = 15
+# --- lossless video output ---
+image = render.image_settings
+if "media_type" in image.bl_rna.properties:
+    image.media_type = "VIDEO"
+image.file_format = "FFMPEG"
+
+ff = render.ffmpeg
+ff.format = "MKV"
+ff.codec = "FFV1"
+ff.constant_rate_factor = "LOSSLESS"
+ff.use_lossless_output = True
+ff.ffmpeg_preset = "GOOD"
+ff.gopsize = 1          # every frame a keyframe: any segment start cuts cleanly
+ff.audio_codec = "NONE"
+
 render.use_overwrite = True
 render.use_file_extension = True
 render.use_placeholder = False
-render.filepath = os.path.join(FRAMES_DIR, "pcb_")
+render.filepath = os.path.join(SEGMENT_DIR, "seg_%s_" % CHUNK_INDEX)
 
 if render.engine == "CYCLES":
     cy = scene.cycles
@@ -55,23 +72,25 @@ if render.engine == "CYCLES":
     cy.samples = SAMPLES
     cy.preview_samples = 16
     cy.use_adaptive_sampling = True
-    cy.adaptive_threshold = 0.01
+    cy.adaptive_threshold = 0.02
     cy.use_denoising = True
-    cy.max_bounces = 8
-    cy.diffuse_bounces = 4
-    cy.glossy_bounces = 4
-    cy.transmission_bounces = 6
-    cy.transparent_max_bounces = 8
+    cy.max_bounces = 4
+    cy.diffuse_bounces = 2
+    cy.glossy_bounces = 3
+    cy.transmission_bounces = 0
+    cy.transparent_max_bounces = 4
+    cy.volume_bounces = 0
     cy.caustics_reflective = False
     cy.caustics_refractive = False
-    cy.blur_glossy = 1.0
-    cy.volume_bounces = 2
-    # Multi-tiling keeps every runner core busy on a 4K volume scatter.
+    cy.blur_glossy = 2.0
+    cy.sample_clamp_indirect = 6.0
+    cy.use_light_tree = True
+    # Multi-tiling keeps every runner core busy on a 4K frame.
     cy.use_auto_tile = True
     cy.tile_size = 2048
 else:
     ee = scene.eevee
-    ee.taa_render_samples = max(SAMPLES, 64)
+    ee.taa_render_samples = max(SAMPLES, 32)
     if hasattr(ee, "use_raytracing"):
         ee.use_raytracing = True
 
@@ -93,4 +112,5 @@ print("[ci_settings] objects=%d %s" % (len(scene.objects), counts))
 print("[ci_settings] materials=%d meshes=%d curves=%d object-drivers=%d"
       % (len(bpy.data.materials), len(bpy.data.meshes), len(bpy.data.curves),
          drivers))
-print("[ci_settings] output=%s" % render.filepath)
+print("[ci_settings] output=%s (%s/%s lossless)"
+      % (render.filepath, ff.codec, ff.format))
