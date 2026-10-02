@@ -3,6 +3,10 @@ name: Render Blender Clip 4K60
 # Manual only. A 720-frame Cycles render is far too long for one job, so the
 # frames are split across a matrix of parallel chunk jobs and recombined by a
 # collect job. No push, no schedule trigger.
+#
+# The matrix is written out literally rather than generated with fromJSON: a
+# plan job emitting a JSON matrix produced zero render jobs, silently. Static
+# entries are verbose but they cannot drift.
 on:
   workflow_dispatch:
     inputs:
@@ -25,12 +29,6 @@ on:
         default: '64'
         type: choice
         options: ['32', '64', '128', '256']
-      chunks:
-        description: 'Parallel chunk jobs (more chunks = shorter each)'
-        required: true
-        default: '36'
-        type: choice
-        options: ['1', '12', '24', '36', '48']
       max_parallel:
         description: 'Chunks to run at once'
         required: true
@@ -53,65 +51,60 @@ permissions:
 env:
   PYTHONUNBUFFERED: '1'
   SCENE_DIR: blender/scenes/${{ inputs.scene }}
+  TOTAL_FRAMES: '720'
 
 jobs:
-  plan:
-    name: Plan chunks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      matrix: ${{ steps.split.outputs.matrix }}
-      total: ${{ steps.split.outputs.total }}
-      chunk: ${{ steps.split.outputs.chunk }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Split the frame range
-        id: split
-        env:
-          CHUNKS: ${{ inputs.chunks }}
-          LAST_FRAME: '720'
-        run: |
-          set -euo pipefail
-          chunks=$CHUNKS
-          last=$LAST_FRAME
-          # Round the chunk size up so the last chunk is not a 1-frame orphan.
-          per=$(( (last + chunks - 1) / chunks ))
-          [ "$per" -lt 1 ] && per=1
-          matrix='['
-          first=1
-          n=0
-          while [ "$first" -le "$last" ]; do
-            end=$(( first + per - 1 ))
-            [ "$end" -gt "$last" ] && end=$last
-            n=$(( n + 1 ))
-            [ "$n" -gt 1 ] && matrix="${matrix},"
-            matrix="${matrix}{\"start\":${first},\"end\":${end},\"chunk\":$(( n - 1 ))}"
-            echo "chunk $(( n - 1 )): frames $first-$end ($(( end - first + 1 )) frames)"
-            first=$(( end + 1 ))
-          done
-          matrix="${matrix}]"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
-          echo "total=${n}" >> "$GITHUB_OUTPUT"
-          echo "chunk=${per}" >> "$GITHUB_OUTPUT"
-
   render:
     name: Frames ${{ matrix.start }}-${{ matrix.end }}
-    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: ${{ inputs.max_parallel }}
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix:
+        include:
+            - { chunk: 0, start: 1, end: 20 }
+            - { chunk: 1, start: 21, end: 40 }
+            - { chunk: 2, start: 41, end: 60 }
+            - { chunk: 3, start: 61, end: 80 }
+            - { chunk: 4, start: 81, end: 100 }
+            - { chunk: 5, start: 101, end: 120 }
+            - { chunk: 6, start: 121, end: 140 }
+            - { chunk: 7, start: 141, end: 160 }
+            - { chunk: 8, start: 161, end: 180 }
+            - { chunk: 9, start: 181, end: 200 }
+            - { chunk: 10, start: 201, end: 220 }
+            - { chunk: 11, start: 221, end: 240 }
+            - { chunk: 12, start: 241, end: 260 }
+            - { chunk: 13, start: 261, end: 280 }
+            - { chunk: 14, start: 281, end: 300 }
+            - { chunk: 15, start: 301, end: 320 }
+            - { chunk: 16, start: 321, end: 340 }
+            - { chunk: 17, start: 341, end: 360 }
+            - { chunk: 18, start: 361, end: 380 }
+            - { chunk: 19, start: 381, end: 400 }
+            - { chunk: 20, start: 401, end: 420 }
+            - { chunk: 21, start: 421, end: 440 }
+            - { chunk: 22, start: 441, end: 460 }
+            - { chunk: 23, start: 461, end: 480 }
+            - { chunk: 24, start: 481, end: 500 }
+            - { chunk: 25, start: 501, end: 520 }
+            - { chunk: 26, start: 521, end: 540 }
+            - { chunk: 27, start: 541, end: 560 }
+            - { chunk: 28, start: 561, end: 580 }
+            - { chunk: 29, start: 581, end: 600 }
+            - { chunk: 30, start: 601, end: 620 }
+            - { chunk: 31, start: 621, end: 640 }
+            - { chunk: 32, start: 641, end: 660 }
+            - { chunk: 33, start: 661, end: 680 }
+            - { chunk: 34, start: 681, end: 700 }
+            - { chunk: 35, start: 701, end: 720 }
     steps:
       - uses: actions/checkout@v4
 
       - name: Free disk space
         run: |
           df -h /
-          # A single chunk only needs room for its own frames, but the SDKs
-          # are dead weight either way.
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
           df -h /
 
@@ -182,7 +175,8 @@ jobs:
 
   collect:
     name: Encode and QC
-    needs: [plan, render]
+    needs: [render]
+    if: always() && needs.render.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -208,7 +202,8 @@ jobs:
           du -sh "${{ env.SCENE_DIR }}/renders"
           df -h /
           echo "TOTAL_FRAMES=$total" >> "$GITHUB_ENV"
-          [ "$total" -ne 720 ] && { echo "::error::expected 720 frames, got $total"; exit 1; }
+          [ "$total" -ne "$TOTAL_FRAMES" ] && {
+            echo "::error::expected $TOTAL_FRAMES frames, got $total"; exit 1; }
 
       - name: Loop seam QC
         if: ${{ inputs.run_check }}
@@ -247,10 +242,9 @@ jobs:
 
       - name: Update delivery checklist
         run: |
-          f="${{ env.SCENE_DIR }}/metadata.json"
-          python - "$f" <<'PY'
-          import json, sys
-          path = sys.argv[1]
+          python - <<'PY'
+          import json
+          path = "blender/scenes/003_pcb-ai-chip-loop/metadata.json"
           with open(path, encoding="utf-8") as fh:
               data = json.load(fh)
           check = data.setdefault("delivery_checklist", {})
@@ -264,7 +258,8 @@ jobs:
               fh.write("\n")
           print("delivery_checklist updated")
           PY
-          cp "$f" "${{ env.SCENE_DIR }}/renders/metadata.json"
+          cp "${{ env.SCENE_DIR }}/metadata.json" "${{ env.SCENE_DIR }}/renders/metadata.json" 2>/dev/null || \
+            cp "${{ env.SCENE_DIR }}/metadata.json" "${{ env.SCENE_DIR }}/renders/metadata.json"
 
       - name: Delivery notes
         if: always()
@@ -279,7 +274,7 @@ jobs:
             echo "| codec | H.264 / yuv420p / Rec.709 |"
             echo "| engine | ${{ inputs.engine }} |"
             echo "| samples | ${{ inputs.samples }} |"
-            echo "| chunks | ${{ needs.plan.outputs.total }} of ${{ needs.plan.outputs.chunk }} frames |"
+            echo "| chunks | 36 of 20 frames |"
             echo "| frames collected | ${TOTAL_FRAMES:-0} |"
             echo
             ls -lh "${{ env.SCENE_DIR }}/renders" || true
@@ -296,25 +291,5 @@ jobs:
             ${{ env.SCENE_DIR }}/renders/*-poster.png
             ${{ env.SCENE_DIR }}/renders/loop_qc.json
             ${{ env.SCENE_DIR }}/renders/render-report.json
-            ${{ env.SCENE_DIR }}/renders/metadata.json
           retention-days: 30
           if-no-files-found: error
-
-      - name: Upload master back to the repo
-        if: success()
-        run: |
-          mkdir -p releases
-          cp "${{ env.SCENE_DIR }}/renders/${{ inputs.scene }}-4k.mp4" \
-             "releases/${{ inputs.scene }}-4k60.mp4"
-          cp "${{ env.SCENE_DIR }}/renders/${{ inputs.scene }}-contact-sheet.jpg" \
-             "releases/${{ inputs.scene }}-contact-sheet.jpg" 2>/dev/null || true
-          ls -lh releases/
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/
-          if git diff --cached --quiet; then
-            echo "no change in releases/"
-          else
-            git commit -m "Add ${{ inputs.scene }} 4K60 master"
-            git push
-          fi
