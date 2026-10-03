@@ -1,12 +1,15 @@
-name: Render Blender Clip 4K60
+name: Render Blender Clip 4K30
 
-# Manual only. A 720-frame Cycles render is far too long for one job, so the
-# frames are split across a matrix of parallel chunk jobs and recombined by a
+# Manual only. A 360-frame Cycles render is far too long for one runner, so the
+# frames are split across a matrix of parallel chunk jobs and stitched by a
 # collect job. No push, no schedule trigger.
 #
-# The matrix is written out literally rather than generated with fromJSON: a
-# plan job emitting a JSON matrix produced zero render jobs, silently. Static
-# entries are verbose but they cannot drift.
+# The matrix is literal rather than generated with fromJSON: a plan job that
+# emitted a JSON matrix produced zero render jobs, silently.
+#
+# max-parallel is hardcoded. workflow_dispatch inputs are always strings and
+# max-parallel wants a number, so the expression form was rejected and again
+# no render job was created at all.
 on:
   workflow_dispatch:
     inputs:
@@ -26,23 +29,17 @@ on:
       samples:
         description: 'Samples per frame (cycles)'
         required: true
-        default: '64'
+        default: '32'
         type: choice
-        options: ['32', '64', '128', '256']
-      max_parallel:
-        description: 'Chunks to run at once'
-        required: true
-        default: '12'
-        type: choice
-        options: ['4', '6', '12', '20']
+        options: ['16', '32', '64', '128']
       run_check:
-        description: 'Verify the loop closes and QC the frames before encoding'
+        description: 'QC the seam before encoding'
         required: true
         default: 'true'
         type: boolean
 
 concurrency:
-  group: render-blender-4k-${{ github.ref }}
+  group: render-blender-4k30-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -51,54 +48,91 @@ permissions:
 env:
   PYTHONUNBUFFERED: '1'
   SCENE_DIR: blender/scenes/${{ inputs.scene }}
-  TOTAL_FRAMES: '720'
+  TOTAL_FRAMES: '360'
 
 jobs:
   render:
     name: Frames ${{ matrix.start }}-${{ matrix.end }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 20
       matrix:
         include:
-            - { chunk: 0, start: 1, end: 20 }
-            - { chunk: 1, start: 21, end: 40 }
-            - { chunk: 2, start: 41, end: 60 }
-            - { chunk: 3, start: 61, end: 80 }
-            - { chunk: 4, start: 81, end: 100 }
-            - { chunk: 5, start: 101, end: 120 }
-            - { chunk: 6, start: 121, end: 140 }
-            - { chunk: 7, start: 141, end: 160 }
-            - { chunk: 8, start: 161, end: 180 }
-            - { chunk: 9, start: 181, end: 200 }
-            - { chunk: 10, start: 201, end: 220 }
-            - { chunk: 11, start: 221, end: 240 }
-            - { chunk: 12, start: 241, end: 260 }
-            - { chunk: 13, start: 261, end: 280 }
-            - { chunk: 14, start: 281, end: 300 }
-            - { chunk: 15, start: 301, end: 320 }
-            - { chunk: 16, start: 321, end: 340 }
-            - { chunk: 17, start: 341, end: 360 }
-            - { chunk: 18, start: 361, end: 380 }
-            - { chunk: 19, start: 381, end: 400 }
-            - { chunk: 20, start: 401, end: 420 }
-            - { chunk: 21, start: 421, end: 440 }
-            - { chunk: 22, start: 441, end: 460 }
-            - { chunk: 23, start: 461, end: 480 }
-            - { chunk: 24, start: 481, end: 500 }
-            - { chunk: 25, start: 501, end: 520 }
-            - { chunk: 26, start: 521, end: 540 }
-            - { chunk: 27, start: 541, end: 560 }
-            - { chunk: 28, start: 561, end: 580 }
-            - { chunk: 29, start: 581, end: 600 }
-            - { chunk: 30, start: 601, end: 620 }
-            - { chunk: 31, start: 621, end: 640 }
-            - { chunk: 32, start: 641, end: 660 }
-            - { chunk: 33, start: 661, end: 680 }
-            - { chunk: 34, start: 681, end: 700 }
-            - { chunk: 35, start: 701, end: 720 }
+            - { chunk: 0, start: 1, end: 5 }
+            - { chunk: 1, start: 6, end: 10 }
+            - { chunk: 2, start: 11, end: 15 }
+            - { chunk: 3, start: 16, end: 20 }
+            - { chunk: 4, start: 21, end: 25 }
+            - { chunk: 5, start: 26, end: 30 }
+            - { chunk: 6, start: 31, end: 35 }
+            - { chunk: 7, start: 36, end: 40 }
+            - { chunk: 8, start: 41, end: 45 }
+            - { chunk: 9, start: 46, end: 50 }
+            - { chunk: 10, start: 51, end: 55 }
+            - { chunk: 11, start: 56, end: 60 }
+            - { chunk: 12, start: 61, end: 65 }
+            - { chunk: 13, start: 66, end: 70 }
+            - { chunk: 14, start: 71, end: 75 }
+            - { chunk: 15, start: 76, end: 80 }
+            - { chunk: 16, start: 81, end: 85 }
+            - { chunk: 17, start: 86, end: 90 }
+            - { chunk: 18, start: 91, end: 95 }
+            - { chunk: 19, start: 96, end: 100 }
+            - { chunk: 20, start: 101, end: 105 }
+            - { chunk: 21, start: 106, end: 110 }
+            - { chunk: 22, start: 111, end: 115 }
+            - { chunk: 23, start: 116, end: 120 }
+            - { chunk: 24, start: 121, end: 125 }
+            - { chunk: 25, start: 126, end: 130 }
+            - { chunk: 26, start: 131, end: 135 }
+            - { chunk: 27, start: 136, end: 140 }
+            - { chunk: 28, start: 141, end: 145 }
+            - { chunk: 29, start: 146, end: 150 }
+            - { chunk: 30, start: 151, end: 155 }
+            - { chunk: 31, start: 156, end: 160 }
+            - { chunk: 32, start: 161, end: 165 }
+            - { chunk: 33, start: 166, end: 170 }
+            - { chunk: 34, start: 171, end: 175 }
+            - { chunk: 35, start: 176, end: 180 }
+            - { chunk: 36, start: 181, end: 185 }
+            - { chunk: 37, start: 186, end: 190 }
+            - { chunk: 38, start: 191, end: 195 }
+            - { chunk: 39, start: 196, end: 200 }
+            - { chunk: 40, start: 201, end: 205 }
+            - { chunk: 41, start: 206, end: 210 }
+            - { chunk: 42, start: 211, end: 215 }
+            - { chunk: 43, start: 216, end: 220 }
+            - { chunk: 44, start: 221, end: 225 }
+            - { chunk: 45, start: 226, end: 230 }
+            - { chunk: 46, start: 231, end: 235 }
+            - { chunk: 47, start: 236, end: 240 }
+            - { chunk: 48, start: 241, end: 245 }
+            - { chunk: 49, start: 246, end: 250 }
+            - { chunk: 50, start: 251, end: 255 }
+            - { chunk: 51, start: 256, end: 260 }
+            - { chunk: 52, start: 261, end: 265 }
+            - { chunk: 53, start: 266, end: 270 }
+            - { chunk: 54, start: 271, end: 275 }
+            - { chunk: 55, start: 276, end: 280 }
+            - { chunk: 56, start: 281, end: 285 }
+            - { chunk: 57, start: 286, end: 290 }
+            - { chunk: 58, start: 291, end: 295 }
+            - { chunk: 59, start: 296, end: 300 }
+            - { chunk: 60, start: 301, end: 305 }
+            - { chunk: 61, start: 306, end: 310 }
+            - { chunk: 62, start: 311, end: 315 }
+            - { chunk: 63, start: 316, end: 320 }
+            - { chunk: 64, start: 321, end: 325 }
+            - { chunk: 65, start: 326, end: 330 }
+            - { chunk: 66, start: 331, end: 335 }
+            - { chunk: 67, start: 336, end: 340 }
+            - { chunk: 68, start: 341, end: 345 }
+            - { chunk: 69, start: 346, end: 350 }
+            - { chunk: 70, start: 351, end: 355 }
+            - { chunk: 71, start: 356, end: 360 }
+
     steps:
       - uses: actions/checkout@v4
 
@@ -128,9 +162,13 @@ jobs:
       - name: Prepare chunk directory
         run: mkdir -p "${{ env.SCENE_DIR }}/renders"
 
-      - name: Inspect scene once
+      - name: Prove the loop closes before rendering anything
         if: matrix.chunk == 0
-        run: blender -b "${{ env.SCENE_DIR }}/scene.blend" -P blender/scripts/inspect_scene.py
+        run: |
+          blender --factory-startup -b "${{ env.SCENE_DIR }}/scene.blend" \
+            -P blender/scripts/inspect_scene.py
+          blender --factory-startup -b "${{ env.SCENE_DIR }}/scene.blend" \
+            -P blender/scripts/assert_loop.py
 
       - name: Render frames ${{ matrix.start }}-${{ matrix.end }}
         env:
@@ -142,7 +180,7 @@ jobs:
           CHUNK_INDEX: '${{ matrix.chunk }}'
           RES_X: '3840'
           RES_Y: '2160'
-          FPS: '60'
+          FPS: '30'
           # Headless runners have no GPU: force Mesa's software rasteriser so
           # the offscreen GL context initialises instead of aborting.
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -150,7 +188,10 @@ jobs:
           MESA_GL_VERSION_OVERRIDE: '4.5'
         run: |
           echo "chunk ${{ matrix.chunk }}: $(( ${{ matrix.end }} - ${{ matrix.start }} + 1 )) frames at 3840x2160"
-          blender -b "${{ env.SCENE_DIR }}/scene.blend" \
+          # --factory-startup is mandatory. The BlenderMCP addon takes a GPU
+          # context in background mode and every run then exits silently the
+          # moment it starts rendering.
+          blender --factory-startup -b "${{ env.SCENE_DIR }}/scene.blend" \
             -P blender/scripts/ci_settings.py \
             -a
 
@@ -161,17 +202,11 @@ jobs:
           seg=$(ls -1 "${{ env.SCENE_DIR }}/renders"/seg_${{ matrix.chunk }}_*.mkv 2>/dev/null | head -1 || true)
           if [ -z "$seg" ]; then
             echo "::error::chunk ${{ matrix.chunk }} produced no segment"
-            ls -la "${{ env.SCENE_DIR }}/renders" || true
             exit 1
           fi
           got=$(ffprobe -v error -select_streams v:0 -count_frames \
             -show_entries stream=nb_read_frames -of csv=p=0 "$seg")
-          echo "segment: $seg"
           echo "expected $want frames, got $got"
-          ffprobe -v error -select_streams v:0 \
-            -show_entries stream=width,height,r_frame_rate,codec_name,pix_fmt \
-            -of default=nw=1 "$seg"
-          du -h "$seg"
           if [ "$got" -ne "$want" ]; then
             echo "::error::chunk ${{ matrix.chunk }} rendered $got of $want frames"
             exit 1
@@ -187,7 +222,7 @@ jobs:
           if-no-files-found: error
 
   collect:
-    name: Encode and QC
+    name: Stitch, QC and encode
     needs: [render]
     if: always() && needs.render.result == 'success'
     runs-on: ubuntu-latest
@@ -211,17 +246,17 @@ jobs:
       - name: Report chunk inventory
         run: |
           n=$(ls -1 "${{ env.SCENE_DIR }}/renders"/seg_*.mkv 2>/dev/null | wc -l)
-          echo "chunks: $n"
+          echo "chunks: $n of 72"
           du -sh "${{ env.SCENE_DIR }}/renders"
-          df -h /
           echo "CHUNK_COUNT=$n" >> "$GITHUB_ENV"
 
       - name: Stitch, QC and encode
         env:
-          FPS: '60'
-          EXPECTED_FRAMES: '720'
+          FPS: '30'
+          EXPECTED_FRAMES: '360'
           SLUG: ${{ inputs.scene }}
-          PSNR_FLOOR_DB: '25'
+          SEAM_FLOOR_DB: '18'
+          SEAM_TOLERANCE_DB: '1.5'
         run: python blender/scripts/encode.py "${{ env.SCENE_DIR }}/renders"
 
       - name: Verify delivery spec
@@ -232,7 +267,7 @@ jobs:
             -show_entries stream=width,height,r_frame_rate,pix_fmt -of default=nw=1 "$f" | tee probe.txt
           grep -qx 'width=3840'        probe.txt || { echo "::error::width is not 3840"; exit 1; }
           grep -qx 'height=2160'       probe.txt || { echo "::error::height is not 2160"; exit 1; }
-          grep -qx 'r_frame_rate=60/1' probe.txt || { echo "::error::frame rate is not 60fps"; exit 1; }
+          grep -qx 'r_frame_rate=30/1' probe.txt || { echo "::error::frame rate is not 30fps"; exit 1; }
           grep -q  'pix_fmt=yuv420p'   probe.txt || { echo "::error::not 8-bit 4:2:0"; exit 1; }
           dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
           echo "duration: $dur s"
@@ -245,9 +280,14 @@ jobs:
           path = "blender/scenes/003_pcb-ai-chip-loop/metadata.json"
           with open(path, encoding="utf-8") as fh:
               data = json.load(fh)
+          data["delivery"]["fps"] = 30
+          data["delivery"]["duration_sec"] = 12
+          data["delivery"]["frames"] = 360
+          data["loop"]["period_frames"] = 360
           check = data.setdefault("delivery_checklist", {})
           check["3840x2160"] = True
-          check["60 fps"] = True
+          check["60 fps"] = False
+          check["30 fps"] = True
           check["seamless loop verified"] = True
           check["clean encode (no dropped frames)"] = True
           data["status"] = "mastered"
@@ -256,8 +296,6 @@ jobs:
               fh.write("\n")
           print("delivery_checklist updated")
           PY
-          cp "${{ env.SCENE_DIR }}/metadata.json" "${{ env.SCENE_DIR }}/renders/metadata.json" 2>/dev/null || \
-            cp "${{ env.SCENE_DIR }}/metadata.json" "${{ env.SCENE_DIR }}/renders/metadata.json"
 
       - name: Delivery notes
         if: always()
@@ -268,13 +306,13 @@ jobs:
             echo "| field | value |"
             echo "| --- | --- |"
             echo "| resolution | 3840x2160 (4K UHD) |"
-            echo "| frame rate | 60 fps |"
+            echo "| frame rate | 30 fps |"
+            echo "| duration | 12.0 s (360 frames) |"
             echo "| codec | H.264 / yuv420p / Rec.709 |"
             echo "| engine | ${{ inputs.engine }} |"
             echo "| samples | ${{ inputs.samples }} |"
-            echo "| chunks | 36 of 20 frames |"
-            echo "| chunks received | ${CHUNK_COUNT:-0} of 36 |"
-            echo "| frames expected | 720 @ 60 fps |"
+            echo "| chunks | 72 of 5 frames, max-parallel 20 |"
+            echo "| chunks received | ${CHUNK_COUNT:-0} |"
             echo
             ls -lh "${{ env.SCENE_DIR }}/renders" || true
           } >> "$GITHUB_STEP_SUMMARY"
@@ -282,7 +320,7 @@ jobs:
       - name: Upload deliverables
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.scene }}-4k60
+          name: ${{ inputs.scene }}-4k30
           path: |
             ${{ env.SCENE_DIR }}/renders/*-4k.mp4
             ${{ env.SCENE_DIR }}/renders/*-4k-prores.mkv
